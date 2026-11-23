@@ -1,4 +1,4 @@
-import type { Chapter, Quest, QuestApi } from '../types';
+import type { Chapter, Quest, QuestApi, Stats } from '../types';
 import { SPECIES } from './creatures';
 import { plotDistance } from './schema';
 
@@ -7,6 +7,11 @@ export const CHAPTERS: Chapter[] = [
   { n: 2, title: 'Finding What You Need', concept: 'WHERE' },
   { n: 3, title: 'Everything In Its Place', concept: 'ORDER BY & LIMIT' },
   { n: 4, title: 'The Cold Snap', concept: 'COUNT, SUM, AVG & MAX' },
+  { n: 4.5, title: 'The Autumn Fair', concept: 'Free play', free: true },
+  { n: 5, title: 'Puddles and Patterns', concept: 'GROUP BY & HAVING' },
+  { n: 5.5, title: 'The Dry Spell', concept: 'Free play', free: true },
+  { n: 6, title: 'Things That Go Missing', concept: 'NULL & DISTINCT' },
+  { n: 6.5, title: 'The Ledger Audit', concept: 'Free play', free: true },
 ];
 
 function arrive(api: QuestApi, name: string, plot: number, hunger: number, mood: number): string {
@@ -27,6 +32,18 @@ const endedDay = (api: QuestApi) => api.day > api.progress.questStart.day;
 const hungerOf = (api: QuestApi, name: string) => Number(api.scalar('SELECT hunger FROM creatures WHERE name = ?', [name]) ?? 99);
 
 const where = { pattern: /\bwhere\b/i, message: 'Use `WHERE` to filter the rows for this one.' };
+const groupBy = { pattern: /\bgroup\s+by\b/i, message: 'Use `GROUP BY` to make one row per group.' };
+const isNull = { pattern: /\bis\s+(not\s+)?null\b/i, message: 'Use `IS NULL` (or `IS NOT NULL`) to test for missing values.' };
+const distinct = { pattern: /\bdistinct\b/i, message: 'Use `DISTINCT` to remove the repeats.' };
+
+/** How much a stat has grown since the current quest started. */
+function since(api: QuestApi, pick: (s: Stats) => number): number {
+  return pick(api.progress.stats) - pick(api.progress.questStart.stats);
+}
+const lowestMood = (api: QuestApi) => Number(api.scalar('SELECT MIN(mood) FROM creatures') ?? 0);
+const plantedNow = (api: QuestApi) => Number(api.scalar('SELECT COUNT(*) FROM plots WHERE crop IS NOT NULL'));
+const freePlay =
+  "This is **free play**: there's no set query to write. Use anything you've learned, in any order, at your own pace. The goals tick off by themselves as you reach them.";
 
 export const QUESTS: Quest[] = [
   // ───────────────────────── Chapter 1: SELECT ─────────────────────────
@@ -60,7 +77,7 @@ export const QUESTS: Quest[] = [
     concept: {
       title: 'Choosing columns',
       body: 'Instead of `*`, list the columns you want, separated by commas.',
-      example: 'SELECT name, hunger FROM creatures;',
+      example: 'SELECT id, crop FROM plots;',
     },
     hints: {
       nudge: 'Replace the `*` with the two column names, with a comma between them.',
@@ -302,7 +319,7 @@ export const QUESTS: Quest[] = [
       blank: 'Press "Sell 1" next to anything you have.',
       answer: "Barn → Sell 1 next to an egg. If you have nothing, end a day or two and Henbell will lay some.",
     },
-    check: (api) => api.progress.stats.sold > api.progress.questStart.sold,
+    check: (api) => api.progress.stats.sold > api.progress.questStart.stats.sold,
     reward: { coins: 5, xp: 10 },
   },
   {
@@ -490,6 +507,486 @@ export const QUESTS: Quest[] = [
       return plotDistance(h, c) > 1;
     },
     reward: { coins: 20, xp: 40 },
+  },
+  // ─────────────────── Free play: The Autumn Fair ───────────────────
+  {
+    id: 'f1-fair',
+    chapter: 4.5,
+    kind: 'goal',
+    title: 'The Autumn Fair',
+    onStart: (api) => {
+      api.system("UPDATE inventory SET quantity = quantity + 2 WHERE item = 'sunpuff_seed'");
+      return '🎪 Mayor Thimble left 2 Sunpuff seeds on your doorstep, with a flyer for the Autumn Fair.';
+    },
+    story:
+      "Big news! **Mayor Thimble** (a very important badger) is holding the Autumn Fair, and every farm in the Hollow is expected to show off. Thimble left you two Sunpuff seeds as a welcome.\n\n" +
+      freePlay +
+      "\n\nTip: the Ledger is your best friend here. `seeds` tells you how long each crop takes, `market` what it sells for, and `creatures` who needs feeding.",
+    task: 'Get your farm fair-ready.',
+    goals: [
+      { label: 'Earn 80 coins from selling', progress: (api) => ({ have: since(api, (s) => s.earned), need: 80 }) },
+      { label: 'Harvest 2 Sunpuffs', progress: (api) => ({ have: since(api, (s) => s.harvestedBy.sunpuff ?? 0), need: 2 }) },
+      { label: 'Harvest a Glassberry', progress: (api) => ({ have: since(api, (s) => s.harvestedBy.glassberry ?? 0), need: 1 }) },
+      { label: 'Every creature in a good mood (6+) at the same time', progress: (api) => ({ have: lowestMood(api), need: 6 }) },
+    ],
+    hints: {
+      nudge: 'Glassberries take the longest to grow, so plant one early. Squeal’s tilled plot grows crops faster.',
+      blank: "Grumpy creatures are usually hungry ones, or a Henbell near Chimnius's smoke. Find the grumpy ones with `SELECT name, hunger, mood FROM creatures ORDER BY mood;`",
+      answer:
+        'A plan that works: buy a Glassberry seed, plant it and a Sunpuff on tilled plots, feed everyone every morning, sell eggs and pebbles as they come in, and end days until it all ripens.',
+    },
+    reward: { coins: 25, xp: 40 },
+  },
+  {
+    id: 'f1-eggs',
+    chapter: 4.5,
+    kind: 'report',
+    title: 'The judges’ first question',
+    story:
+      "The fair judges have questions, and they only trust numbers that come straight from the Ledger. You can find the answer however you like. Then type it in.",
+    task: 'Answer the judges.',
+    question: 'How many eggs has Henbell laid since you arrived?',
+    expected: "SELECT COALESCE(SUM(amount), 0) FROM farm_log WHERE source = 'Henbell' AND event = 'laid_egg'",
+    hints: {
+      nudge: "Every egg Henbell lays gets its own row in `farm_log`. You could count those rows, or add up their `amount`.",
+      blank: "SELECT SUM(amount) FROM farm_log WHERE source = 'Henbell' AND event = '___';",
+      answer: "Run `SELECT SUM(amount) FROM farm_log WHERE source = 'Henbell' AND event = 'laid_egg';` and type in the number.",
+    },
+    reward: { coins: 10, xp: 20 },
+  },
+  {
+    id: 'f1-cold',
+    chapter: 4.5,
+    kind: 'report',
+    title: 'The judges’ second question',
+    story: "The judges are swapping cold-snap stories. Each one swears theirs was the worst. Settle it with data.",
+    task: 'Answer the judges.',
+    question: 'What is the coldest temperature the Hollow has had since you arrived?',
+    expected: 'SELECT MIN(temperature) FROM weather WHERE day < (SELECT day FROM farm)',
+    hints: {
+      nudge: 'The `weather` table has a `temperature` for every day, including days still to come.',
+      blank: 'SELECT ___(temperature) FROM weather WHERE day < ___;',
+      answer: 'Run `SELECT MIN(temperature) FROM weather WHERE day < (SELECT day FROM farm);` (or just use today’s day number from the top bar).',
+    },
+    reward: { coins: 10, xp: 20 },
+  },
+
+  // ───────────────── Chapter 5: GROUP BY & HAVING ─────────────────
+  {
+    id: 'c5-group',
+    chapter: 5,
+    kind: 'query',
+    title: 'A puddle with feet',
+    onStart: (api) => arrive(api, 'Puddlewump', 8, 3, 7),
+    story:
+      "Did you hear that *splish… splosh*? A **Puddlewump** squelched in after the fair and settled on plot 8.\n\nThe log is getting long now. Instead of reading every row, let's *summarise* it: how many entries has each source written?",
+    task: 'Show each `source` in `farm_log` once, next to how many rows it has written.',
+    concept: {
+      title: 'GROUP BY',
+      body: '`GROUP BY column` squashes rows that share a value into one row per group. Aggregates like `COUNT(*)` or `SUM(…)` then work *per group* instead of over the whole table.',
+      example: 'SELECT crop, COUNT(*) FROM plots GROUP BY crop;',
+    },
+    hints: {
+      nudge: 'Select `source` and `COUNT(*)`, then group by `source`.',
+      blank: 'SELECT source, COUNT(*) FROM farm_log GROUP BY ___;',
+    },
+    expected: 'SELECT source, COUNT(*) FROM farm_log GROUP BY source',
+    mustInclude: [groupBy],
+    reward: { coins: 10, xp: 20 },
+  },
+  {
+    id: 'c5-sum',
+    chapter: 5,
+    kind: 'query',
+    title: 'Totting up',
+    story: 'Counting rows is handy, but some events have an `amount`. Harvests can bring in several crops at once, for example. Let’s total those up instead.',
+    task: 'Show each `event` in `farm_log` next to the total of its `amount`.',
+    hints: {
+      nudge: 'Same shape as last time, but group by `event` and use `SUM(amount)`.',
+      blank: 'SELECT event, ___(amount) FROM farm_log GROUP BY ___;',
+    },
+    expected: 'SELECT event, SUM(amount) FROM farm_log GROUP BY event',
+    mustInclude: [groupBy, { pattern: /\bsum\s*\(/i, message: 'Use `SUM(amount)` to add up each group.' }],
+    reward: { coins: 10, xp: 20 },
+  },
+  {
+    id: 'c5-night',
+    chapter: 5,
+    kind: 'action',
+    title: 'Watch the puddle',
+    story: "Let's see what a Puddlewump does after dark. Keep an eye on the plots' `moisture` too.",
+    task: 'End the day.',
+    hints: { nudge: 'Top of the screen.', blank: 'Press 🌙 End day.', answer: 'Press 🌙 End day.' },
+    check: endedDay,
+    reward: { coins: 5, xp: 10 },
+  },
+  {
+    id: 'c5-puddle',
+    chapter: 5,
+    kind: 'answer',
+    title: 'What is a Puddlewump?',
+    story: 'Use your new `GROUP BY` skill to summarise everything Puddlewump did, then check the plots around it.',
+    task: '**What does Puddlewump do at night?**',
+    hints: {
+      nudge: "Filter `farm_log` to Puddlewump, then group by `event` (or by `plot_id`!).",
+      blank: "SELECT plot_id, COUNT(*) FROM farm_log WHERE source = 'Puddlewump' GROUP BY ___;",
+      answer:
+        "Run `SELECT plot_id, COUNT(*) FROM farm_log WHERE source = 'Puddlewump' GROUP BY plot_id;`. It wrote `watered` for its own plot and every plot next to it. Then `SELECT id, moisture FROM plots;` shows those plots are all wet.",
+    },
+    choices: ['It drinks the water out of nearby plots', 'It waters its own plot and the plots next to it', 'It only waters plots with crops on them'],
+    correct: 1,
+    discovers: ['puddle_water'],
+    reward: { coins: 15, xp: 25 },
+  },
+  {
+    id: 'c5-rot',
+    chapter: 5,
+    kind: 'action',
+    title: 'Too much of a good thing?',
+    story:
+      "A creature that waters for free sounds perfect. But the old farmers have a saying: *never plant a root where a puddle sleeps.* Let's test it, like a proper scientist.",
+    task: "Plant a **Snoutroot** on the plot Puddlewump is sitting on, then end the day.",
+    hints: {
+      nudge: "Check Puddlewump's card (or `SELECT plot_id FROM creatures WHERE name = 'Puddlewump';`) to find its plot.",
+      blank: "Select that plot, plant a Snoutroot (buy a seed in the Barn if you're out), then press 🌙 End day.",
+      answer: 'Puddlewump starts on plot 8: click plot 8 → Plant 🥕 Snoutroot → 🌙 End day.',
+    },
+    check: (api) => Number(api.scalar("SELECT COUNT(*) FROM farm_log WHERE event = 'rotted'")) > 0,
+    reward: { coins: 10, xp: 15 },
+  },
+  {
+    id: 'c5-rot-why',
+    chapter: 5,
+    kind: 'answer',
+    title: 'Soggy roots',
+    story: "Hmm. That Snoutroot doesn't look well. Find out what happened on that plot.",
+    task: '**Why isn’t the Snoutroot growing?**',
+    hints: {
+      nudge: "Group that plot's log entries by `event` to see everything that happened there.",
+      blank: "SELECT event, COUNT(*) FROM farm_log WHERE plot_id = ___ GROUP BY event;",
+      answer: "Run `SELECT * FROM farm_log WHERE event = 'rotted';`. Puddlewump's own plot is so soggy that root crops rot there.",
+    },
+    choices: [
+      'Puddlewump ate it',
+      "Puddlewump's own plot is so soggy that root crops rot there",
+      'Snoutroot only grows in the rain',
+    ],
+    correct: 1,
+    discovers: ['puddle_rot'],
+    reward: { coins: 15, xp: 25 },
+  },
+  {
+    id: 'c5-having',
+    chapter: 5,
+    kind: 'query',
+    title: 'Frost-prone plots',
+    story:
+      "That cold snap lasted more than one night. Some plots froze *again and again*. Those are the ones that really need Chimnius nearby next winter.\n\n`WHERE` filters rows *before* grouping. To filter the *groups* themselves (like \"more than one frost\"), you need its partner, `HAVING`.",
+    task: "Show each `plot_id` that froze more than once, with its number of `'frost'` events.",
+    concept: {
+      title: 'HAVING',
+      body: '`HAVING` is like `WHERE`, but for groups. It goes after `GROUP BY` and can use aggregates, like `HAVING COUNT(*) > 1`.',
+      example: 'SELECT crop, COUNT(*) FROM plots GROUP BY crop HAVING COUNT(*) > 1;',
+    },
+    hints: {
+      nudge: "Filter to frost events with `WHERE`, group by `plot_id`, then keep groups with `HAVING COUNT(*) > 1`.",
+      blank: "SELECT plot_id, COUNT(*) FROM farm_log WHERE event = 'frost' GROUP BY plot_id HAVING ___ > 1;",
+    },
+    expected: "SELECT plot_id, COUNT(*) FROM farm_log WHERE event = 'frost' GROUP BY plot_id HAVING COUNT(*) > 1",
+    mustInclude: [groupBy, { pattern: /\bhaving\b/i, message: 'Use `HAVING` to keep only the groups with more than one frost.' }],
+    reward: { coins: 20, xp: 30 },
+  },
+
+  // ─────────────────── Free play: The Dry Spell ───────────────────
+  {
+    id: 'f2-dry',
+    chapter: 5.5,
+    kind: 'goal',
+    title: 'The Dry Spell',
+    onStart: (api) => {
+      api.system("UPDATE weather SET sky = 'sunny', temperature = 15 WHERE day BETWEEN ? AND ?", [api.day, api.day + 7]);
+      return '☀️ The Almanac predicts a long dry spell. No rain for a week!';
+    },
+    story:
+      "The Almanac says no rain for a week. Dry soil halves how fast crops grow, so the farmers who come out ahead will be the ones who use their water wisely. A certain puddle might help…\n\n" +
+      freePlay,
+    task: 'Keep the farm thriving through the dry spell.',
+    goals: [
+      { label: 'See the dry spell through (7 days)', progress: (api) => ({ have: api.day - api.progress.questStart.day, need: 7 }) },
+      { label: 'Have 7 plots growing crops at once', progress: (api) => ({ have: plantedNow(api), need: 7 }) },
+      { label: 'Harvest 3 Glassberries', progress: (api) => ({ have: since(api, (s) => s.harvestedBy.glassberry ?? 0), need: 3 }) },
+      { label: 'Earn 150 coins from selling', progress: (api) => ({ have: since(api, (s) => s.earned), need: 150 }) },
+    ],
+    hints: {
+      nudge: "Glassberries take 5 nights, or twice that in dry soil. Plots with `moisture = 0` grow at half speed. Plots next to Puddlewump stay wet for free. Just don't put Snoutroot on its own plot!",
+      blank: 'Find the thirsty plots with `SELECT id, crop, moisture FROM plots WHERE moisture = 0;` and water them, or move Puddlewump closer.',
+      answer:
+        "Plant Sunpuffs or Glassberries around Puddlewump (not on its own plot), water any dry plots each morning, and sell everything you harvest. Eggs and pebbles add up too.",
+    },
+    reward: { coins: 30, xp: 50 },
+  },
+  {
+    id: 'f2-water',
+    chapter: 5.5,
+    kind: 'report',
+    title: 'The Water Board',
+    story: "The Hollow's Water Board heard you have a walking puddle. They'd like it registered, along with a record of its work.",
+    task: 'Answer the Water Board.',
+    question: 'How many times, in total, has Puddlewump watered a plot?',
+    expected: "SELECT COUNT(*) FROM farm_log WHERE source = 'Puddlewump' AND event = 'watered'",
+    hints: {
+      nudge: "Each plot Puddlewump waters gets its own `'watered'` row in the log.",
+      blank: "SELECT COUNT(*) FROM farm_log WHERE source = 'Puddlewump' AND event = '___';",
+      answer: "Run `SELECT COUNT(*) FROM farm_log WHERE source = 'Puddlewump' AND event = 'watered';`",
+    },
+    reward: { coins: 10, xp: 20 },
+  },
+  {
+    id: 'f2-busiest',
+    chapter: 5.5,
+    kind: 'report',
+    title: 'The busiest event',
+    story: 'One last form. The Water Board wants to know what happens most on your farm, and it only accepts one word.',
+    task: 'Answer the Water Board.',
+    question: 'Which `event` appears most often in your log? (Type the event name.)',
+    expected:
+      'SELECT event FROM farm_log GROUP BY event HAVING COUNT(*) = (SELECT MAX(n) FROM (SELECT COUNT(*) AS n FROM farm_log GROUP BY event))',
+    hints: {
+      nudge: 'Group by `event`, count each group, then sort so the biggest count comes first.',
+      blank: 'SELECT event, COUNT(*) FROM farm_log GROUP BY event ORDER BY COUNT(*) ___ LIMIT 1;',
+      answer: 'Run `SELECT event, COUNT(*) FROM farm_log GROUP BY event ORDER BY COUNT(*) DESC LIMIT 1;` and type in the event.',
+    },
+    reward: { coins: 15, xp: 25 },
+  },
+
+  // ───────────────── Chapter 6: NULL & DISTINCT ─────────────────
+  {
+    id: 'c6-shimmer',
+    chapter: 6,
+    kind: 'action',
+    title: 'A shimmer on plot 1',
+    onStart: (api) => arrive(api, 'Nullkin', 1, 0, 7),
+    story:
+      "Did you see that? Something flickered over plot 1. When I look straight at it, it's gone… The townsfolk whisper about a **Nullkin**, but nobody has ever *caught* one.\n\nLet's sleep on it and check the Ledger in the morning.",
+    task: 'End the day.',
+    hints: { nudge: 'Top of the screen.', blank: 'Press 🌙 End day.', answer: 'Press 🌙 End day.' },
+    check: endedDay,
+    reward: { coins: 5, xp: 10 },
+  },
+  {
+    id: 'c6-isnull',
+    chapter: 6,
+    kind: 'query',
+    title: 'Who wrote this?',
+    story:
+      "Look at last night's log… some rows have **no source at all**. That blank is called `NULL`. It means *unknown*, and it's sneakier than it looks. Try `WHERE source = NULL` first if you like. You'll see what I mean.",
+    task: 'Show every row of `farm_log` whose `source` is missing.',
+    concept: {
+      title: 'NULL and IS NULL',
+      body: "`NULL` means a value is missing or unknown. Nothing is ever *equal* to unknown, not even another unknown, so `= NULL` never matches. Use `IS NULL` or `IS NOT NULL` instead.",
+      example: 'SELECT * FROM plots WHERE crop IS NULL;',
+    },
+    hints: {
+      nudge: 'Filter on `source`, using `IS NULL` rather than `= NULL`.',
+      blank: 'SELECT * FROM farm_log WHERE source IS ___;',
+    },
+    expected: 'SELECT * FROM farm_log WHERE source IS NULL',
+    mustInclude: [isNull],
+    reward: { coins: 15, xp: 25 },
+  },
+  {
+    id: 'c6-amount',
+    chapter: 6,
+    kind: 'query',
+    title: 'Nibbled numbers',
+    story: "It's not just sources. Some rows have lost their `amount` too, as if something *nibbled* the numbers right off the page.",
+    task: 'Count the rows in `farm_log` whose `amount` is missing.',
+    hints: {
+      nudge: 'Combine `COUNT(*)` with a `WHERE … IS NULL` filter.',
+      blank: 'SELECT COUNT(*) FROM farm_log WHERE amount IS ___;',
+    },
+    expected: 'SELECT COUNT(*) FROM farm_log WHERE amount IS NULL',
+    mustInclude: [isNull],
+    reward: { coins: 10, xp: 20 },
+  },
+  {
+    id: 'c6-notnull',
+    chapter: 6,
+    kind: 'query',
+    title: 'What’s really growing?',
+    story: "Here's the other side of the coin. Empty plots have a `NULL` crop. To see only the plots with something in them, flip it around.",
+    task: 'Show every column of the plots that have a crop (where `crop` is not NULL).',
+    hints: {
+      nudge: 'Use `IS NOT NULL`.',
+      blank: 'SELECT * FROM plots WHERE crop IS ___ NULL;',
+    },
+    expected: 'SELECT * FROM plots WHERE crop IS NOT NULL',
+    mustInclude: [{ pattern: /\bis\s+not\s+null\b/i, message: 'Use `IS NOT NULL` to keep only the plots with a crop.' }],
+    reward: { coins: 10, xp: 20 },
+  },
+  {
+    id: 'c6-nullkin',
+    chapter: 6,
+    kind: 'answer',
+    title: 'Catching a ghost',
+    story: "You can't see a Nullkin, but you *can* see what it leaves behind. Look at the rows with no source: where were they, and what do they say?",
+    task: '**What is the Nullkin doing?**',
+    hints: {
+      nudge: "Look at the `event` column of the rows where `source IS NULL`, and at the `amount`s that went missing.",
+      blank: 'SELECT * FROM farm_log WHERE source IS NULL OR amount IS ___;',
+      answer:
+        "Run `SELECT * FROM farm_log WHERE source IS NULL OR amount IS NULL;`. The source-less rows say `nibbled`, on the Nullkin's plot, and each night one other row's amount goes missing.",
+    },
+    choices: [
+      "It nibbles the Ledger: its own notes have no source, and it erases other entries' amounts",
+      'It deletes whole rows from the log',
+      'It steals crops from plot 1',
+    ],
+    correct: 0,
+    discovers: ['nullkin_nibble', 'nullkin_hunger'],
+    reward: { coins: 20, xp: 30 },
+  },
+  {
+    id: 'c6-echo',
+    chapter: 6,
+    kind: 'action',
+    title: 'Baa… baa… baa…',
+    onStart: (api) => arrive(api, 'Echolamb', 9, 3, 7),
+    story: "A fluffy **Echolamb** wandered in. Its bleat comes back a second later. Then again. Then again. Let's see what a night with an Echolamb looks like.",
+    task: 'End the day.',
+    hints: { nudge: 'Top of the screen.', blank: 'Press 🌙 End day.', answer: 'Press 🌙 End day.' },
+    check: endedDay,
+    reward: { coins: 5, xp: 10 },
+  },
+  {
+    id: 'c6-distinct',
+    chapter: 6,
+    kind: 'query',
+    title: 'Saying it once',
+    story: "The log is full of repeats now. Sometimes you just want to know *which* values exist, each one listed once.",
+    task: 'List each different `source` in `farm_log`, once each.',
+    concept: {
+      title: 'DISTINCT',
+      body: '`SELECT DISTINCT` removes duplicate rows from the result, so each different value (or combination of values) appears once.',
+      example: 'SELECT DISTINCT crop FROM plots;',
+    },
+    hints: {
+      nudge: 'Put `DISTINCT` straight after `SELECT`.',
+      blank: 'SELECT ___ source FROM farm_log;',
+    },
+    expected: 'SELECT DISTINCT source FROM farm_log',
+    mustInclude: [distinct],
+    reward: { coins: 10, xp: 20 },
+  },
+  {
+    id: 'c6-echolamb',
+    chapter: 6,
+    kind: 'answer',
+    title: 'Déjà vu',
+    story: "Look closely at the log rows for the day *before* yesterday. Some of them look awfully familiar…",
+    task: '**What does Echolamb do (besides growing wool)?**',
+    hints: {
+      nudge: 'Sort the log so identical rows sit next to each other, and compare their `id`s.',
+      blank: 'SELECT * FROM farm_log ORDER BY day, source, ___;',
+      answer:
+        'Run `SELECT * FROM farm_log ORDER BY day, source, event;`. Rows from the night before Echolamb arrived appear twice: same day, source, event and amount, but different `id`s.',
+    },
+    choices: [
+      'It eats rows out of the log',
+      "It repeats yesterday: it copies the previous night's log entries as exact duplicates",
+      'It changes the day numbers on old entries',
+    ],
+    correct: 1,
+    discovers: ['echolamb_wool', 'echolamb_echo'],
+    reward: { coins: 20, xp: 30 },
+  },
+  {
+    id: 'c6-count-distinct',
+    chapter: 6,
+    kind: 'query',
+    title: 'The honest egg count',
+    story:
+      "Those echoes make the egg numbers look bigger than they are. Henbell lays at most one egg a night, so the honest count is the number of *different days* it laid on. `DISTINCT` works inside `COUNT` too!",
+    task: "Count the different `day`s on which Henbell has a `'laid_egg'` row.",
+    hints: {
+      nudge: 'Use `COUNT(DISTINCT day)` with a `WHERE` for Henbell’s eggs.',
+      blank: "SELECT COUNT(DISTINCT ___) FROM farm_log WHERE source = 'Henbell' AND event = 'laid_egg';",
+    },
+    expected: "SELECT COUNT(DISTINCT day) FROM farm_log WHERE source = 'Henbell' AND event = 'laid_egg'",
+    mustInclude: [distinct, where],
+    reward: { coins: 20, xp: 30 },
+  },
+
+  // ─────────────────── Free play: The Ledger Audit ───────────────────
+  {
+    id: 'f3-audit',
+    chapter: 6.5,
+    kind: 'goal',
+    title: 'The Ledger Audit',
+    story:
+      "Uh oh. Word got out about ghosts and echoes in your Ledger, and Mayor Thimble has sent an **auditor**. A stern heron in spectacles. Show the Hollow your farm is in good shape, ghosts and all.\n\n" +
+      freePlay,
+    task: 'Impress the auditor.',
+    goals: [
+      { label: 'Sell 3 Echo wool', progress: (api) => ({ have: since(api, (s) => s.soldBy.echo_wool ?? 0), need: 3 }) },
+      { label: 'Harvest 2 Glassberries', progress: (api) => ({ have: since(api, (s) => s.harvestedBy.glassberry ?? 0), need: 2 }) },
+      { label: 'Earn 150 coins from selling', progress: (api) => ({ have: since(api, (s) => s.earned), need: 150 }) },
+      { label: 'Every creature in a good mood (6+) at the same time', progress: (api) => ({ have: lowestMood(api), need: 6 }) },
+    ],
+    hints: {
+      nudge: 'Echolamb only grows wool when it is fed and cheerful. Glassberries take 5 nights, so plant them early.',
+      blank: 'Keep an eye on everyone with `SELECT name, hunger, mood FROM creatures ORDER BY mood;` each morning.',
+      answer: 'Feed everyone daily, plant two Glassberries (on wet plots near Puddlewump), sell wool as it grows, and end days until the goals tick off.',
+    },
+    reward: { coins: 40, xp: 60 },
+  },
+  {
+    id: 'f3-events',
+    chapter: 6.5,
+    kind: 'report',
+    title: 'The auditor’s first question',
+    story: 'The heron peers over its spectacles. "I like a tidy Ledger," it says. "So tell me…"',
+    task: 'Answer the auditor.',
+    question: 'How many *different* kinds of event are in your log?',
+    expected: 'SELECT COUNT(DISTINCT event) FROM farm_log',
+    hints: {
+      nudge: '`COUNT(DISTINCT …)` counts each different value once.',
+      blank: 'SELECT COUNT(DISTINCT ___) FROM farm_log;',
+      answer: 'Run `SELECT COUNT(DISTINCT event) FROM farm_log;`',
+    },
+    reward: { coins: 15, xp: 25 },
+  },
+  {
+    id: 'f3-sources',
+    chapter: 6.5,
+    kind: 'report',
+    title: 'The auditor’s second question',
+    story: '"And how many different *named* sources have written in it?" The heron taps the blank rows. "The unsigned ones don\'t count."',
+    task: 'Answer the auditor.',
+    question: 'How many different sources (not counting the missing ones) appear in your log?',
+    expected: 'SELECT COUNT(DISTINCT source) FROM farm_log',
+    hints: {
+      nudge: '`COUNT(DISTINCT source)` already skips NULLs. Aggregates ignore missing values!',
+      blank: 'SELECT COUNT(DISTINCT ___) FROM farm_log;',
+      answer: 'Run `SELECT COUNT(DISTINCT source) FROM farm_log;`. NULLs are left out automatically.',
+    },
+    reward: { coins: 15, xp: 25 },
+  },
+  {
+    id: 'f3-nibbled',
+    chapter: 6.5,
+    kind: 'report',
+    title: 'The auditor’s last question',
+    story: '"Finally," says the heron, pen poised. "How much damage has your ghost done?"',
+    task: 'Answer the auditor.',
+    question: 'How many rows in your log are missing their `amount` right now?',
+    expected: 'SELECT COUNT(*) FROM farm_log WHERE amount IS NULL',
+    hints: {
+      nudge: "Missing values are `NULL`, and you test for them with `IS NULL`.",
+      blank: 'SELECT COUNT(*) FROM farm_log WHERE amount IS ___;',
+      answer: 'Run `SELECT COUNT(*) FROM farm_log WHERE amount IS NULL;` (today: the Nullkin nibbles more every night!)',
+    },
+    reward: { coins: 25, xp: 40 },
   },
 ];
 

@@ -2,33 +2,37 @@ import { describe, expect, it } from 'vitest';
 import { memoryKV, type Action } from '../src/game';
 import { QUESTS } from '../src/data/quests';
 import { plotDistance } from '../src/data/schema';
-import { newGame, SOLVERS } from './helpers';
+import { newGame, solveCurrent, sql } from './helpers';
 
 
 describe('full playthrough', () => {
-  it('every quest can be completed in order', async () => {
+  it('every quest can be completed in order, with free play taking a sensible number of days', async () => {
     const g = await newGame();
     const seen: string[] = [];
-    for (let guard = 0; guard < 100 && g.currentQuest(); guard++) {
+    const freeDays: Record<string, number> = {};
+    for (let guard = 0; guard < 200 && g.currentQuest(); guard++) {
       const q = g.currentQuest()!;
       seen.push(q.id);
-      if (q.kind === 'query') {
-        const out = g.runPlayerQuery(q.expected + ';');
-        expect(out.error, `${q.id}: ${out.error}`).toBeUndefined();
-        expect(out.feedback?.ok, `${q.id}: ${out.feedback?.message}`).toBe(true);
-      } else if (q.kind === 'answer') {
-        expect(g.answer(q.correct), q.id).toBe(true);
-      } else {
-        const solve = SOLVERS[q.id];
-        expect(solve, `no solver for ${q.id}`).toBeDefined();
-        solve(g);
-        expect(g.currentQuest()?.id, `${q.id} did not complete`).not.toBe(q.id);
-      }
+      const days = solveCurrent(g);
+      expect(g.currentQuest()?.id, `${q.id} did not complete`).not.toBe(q.id);
+      if (q.kind === 'goal') freeDays[q.id] = days;
     }
-    expect(seen).toEqual(QUESTS.map((q) => q.id));
-    expect(g.progress.badges).toContain('frost_detective');
-    expect(g.progress.badges).toContain('hollow_hand');
-    expect(g.progress.met).toEqual(['Squeal', 'Henbell', 'Sortoise', 'Chimnius']);
+    // Quests are met in order. An action quest may complete itself when its evidence already
+    // exists (e.g. a Snoutroot was already growing where Puddlewump settled), so it can be skipped.
+    expect(seen).toEqual(QUESTS.map((q) => q.id).filter((id) => seen.includes(id)));
+    const skipped = QUESTS.filter((q) => !seen.includes(q.id));
+    for (const q of skipped) expect(q.kind, `${q.id} was skipped`).toBe('action');
+    expect(g.progress.questIndex).toBe(QUESTS.length);
+    // Free play should be a stretch of days, not instant and not a slog.
+    for (const [id, days] of Object.entries(freeDays)) {
+      expect(days, `${id} took ${days} days`).toBeGreaterThanOrEqual(3);
+      expect(days, `${id} took ${days} days`).toBeLessThanOrEqual(20);
+    }
+    for (const b of ['frost_detective', 'hollow_hand', 'fair_favourite', 'water_wise', 'ghost_hunter', 'ledger_keeper']) {
+      expect(g.progress.badges).toContain(b);
+    }
+    expect(g.progress.met).toEqual(['Squeal', 'Henbell', 'Sortoise', 'Chimnius', 'Puddlewump', 'Nullkin', 'Echolamb']);
+    expect(g.bestiaryProgress.found).toBe(g.bestiaryProgress.total);
   });
 
   it('answer quests have evidence in the data when reached', async () => {
@@ -39,6 +43,11 @@ describe('full playthrough', () => {
       'c3-sortoise': "SELECT COUNT(*) FROM farm_log WHERE source = 'Sortoise' AND event = 'found'",
       'c4-warm': "SELECT COUNT(*) FROM plots WHERE warmth >= 0",
       'c4-cough': "SELECT COUNT(*) FROM farm_log WHERE source = 'Henbell' AND event = 'coughed'",
+      'c5-puddle': "SELECT COUNT(*) FROM farm_log WHERE source = 'Puddlewump' AND event = 'watered'",
+      'c5-rot-why': "SELECT COUNT(*) FROM farm_log WHERE event = 'rotted'",
+      'c6-nullkin': 'SELECT COUNT(*) FROM farm_log WHERE source IS NULL',
+      'c6-echolamb':
+        'SELECT COUNT(*) FROM (SELECT day, source, plot_id, event FROM farm_log GROUP BY day, source, plot_id, event HAVING COUNT(*) > 1)',
     };
     while (g.currentQuest()) {
       const q = g.currentQuest()!;
@@ -46,7 +55,7 @@ describe('full playthrough', () => {
       else if (q.kind === 'answer') {
         expect(Number(g.scalar(evidence[q.id])), `evidence for ${q.id}`).toBeGreaterThan(0);
         g.answer(q.correct);
-      } else SOLVERS[q.id](g);
+      } else solveCurrent(g);
     }
   });
 });
@@ -136,5 +145,68 @@ describe('game mechanics', () => {
       { type: 'plant', plot: 1, crop: 'glassberry' },
     ];
     for (const a of actions) expect(g.act(a)).toBe(false);
+  });
+});
+
+describe('free play and reports', () => {
+  it('report answers accept the right value (loosely typed) and reject wrong ones', async () => {
+    const g = await newGame();
+    while (g.currentQuest()?.id !== 'f1-eggs') solveCurrent(g);
+    const eggs = Number(g.scalar("SELECT SUM(amount) FROM farm_log WHERE source = 'Henbell' AND event = 'laid_egg'"));
+    expect(g.submitReport(String(eggs + 1))).toBe(false);
+    expect(g.submitReport('lots')).toBe(false);
+    expect(g.currentQuest()?.id).toBe('f1-eggs');
+    expect(g.submitReport(`  ${eggs} `)).toBe(true);
+    expect(g.currentQuest()?.id).toBe('f1-cold');
+  });
+
+  it('text report answers ignore case and quotes', async () => {
+    const g = await newGame();
+    while (g.currentQuest()?.id !== 'f2-busiest') solveCurrent(g);
+    const top = String(
+      g.scalar('SELECT event FROM farm_log GROUP BY event HAVING COUNT(*) = (SELECT MAX(n) FROM (SELECT COUNT(*) AS n FROM farm_log GROUP BY event))'),
+    );
+    expect(g.submitReport(`'${top.toUpperCase()}'`)).toBe(true);
+  });
+
+  it('goals track progress since the free play started, not lifetime totals', async () => {
+    const g = await newGame();
+    while (g.currentQuest()?.id !== 'f1-fair') solveCurrent(g);
+    const q = g.currentQuest()!;
+    if (q.kind !== 'goal') throw new Error('expected a goal quest');
+    const earned = g.goalStatus(q).find((s) => s.label.startsWith('Earn'))!;
+    expect(earned.have).toBe(0);
+  });
+});
+
+describe('old saves', () => {
+  it('upgrades a v1 save so the Nullkin can leave NULLs, keeping all data', async () => {
+    const kv = memoryKV();
+    const g1 = await newGame(kv);
+    g1.act({ type: 'feed', name: 'Squeal' });
+    g1.endDay();
+    // Turn this save back into the original v1 shape: NOT NULL log columns, no echo wool, version 0.
+    const toV1 = (db: typeof g1.db) => {
+      db.run(`
+        CREATE TABLE old_log (id INTEGER PRIMARY KEY, day INTEGER NOT NULL, source TEXT NOT NULL, plot_id INTEGER NOT NULL, event TEXT NOT NULL, amount INTEGER NOT NULL);
+        INSERT INTO old_log SELECT * FROM farm_log; DROP TABLE farm_log; ALTER TABLE old_log RENAME TO farm_log;
+        DELETE FROM inventory WHERE item = 'echo_wool'; DELETE FROM market WHERE item = 'echo_wool';
+        PRAGMA user_version = 0;`);
+    };
+    toV1(g1.db);
+    const snap = new (await sql()).Database(g1.snapshot);
+    toV1(snap);
+    g1.snapshot = snap.export();
+    g1.save();
+    const rowsBefore = Number(g1.scalar('SELECT COUNT(*) FROM farm_log'));
+
+    const g2 = await newGame(kv);
+    expect(Number(g2.scalar('PRAGMA user_version'))).toBe(2);
+    expect(Number(g2.scalar('SELECT COUNT(*) FROM farm_log'))).toBe(rowsBefore);
+    expect(Number(g2.scalar("SELECT COUNT(*) FROM inventory WHERE item = 'echo_wool'"))).toBe(1);
+    g2.db.run("INSERT INTO farm_log (day, source, plot_id, event, amount) VALUES (1, NULL, 1, 'nibbled', NULL)");
+    g2.rewind(); // the snapshot was upgraded too
+    expect(Number(g2.scalar('PRAGMA user_version'))).toBe(2);
+    expect(g2.progress.stats.earned).toBe(0);
   });
 });

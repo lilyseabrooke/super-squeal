@@ -93,11 +93,32 @@ Each creature's entry starts mostly as `???`. Fields are filled in by:
 | 2 | `WHERE`, `AND` | Who's hungry? Henbell arrives. |
 | 3 | `ORDER BY`, `LIMIT` | Sortoise shows you the market. |
 | 4 | `COUNT`, `SUM`, `AVG`, `MAX` | Chimnius arrives with a cold snap — the frost mystery. |
-| 5 | `GROUP BY`, `HAVING` | Prove which creature affects which crop. |
-| 6 | `NULL`, `DISTINCT` | Haunted logs: Nullkin and Echolamb. |
+| 🌻 | Free play | **The Autumn Fair** — get the farm fair-ready; answer the judges. |
+| 5 | `GROUP BY`, `HAVING` | Puddlewump arrives: what does it water, and why do roots rot? |
+| 🌻 | Free play | **The Dry Spell** — a week without rain; answer the Water Board. |
+| 6 | `NULL`, `IS NULL`, `DISTINCT`, `COUNT(DISTINCT …)` | Haunted logs: Nullkin and Echolamb. |
+| 🌻 | Free play | **The Ledger Audit** — impress a stern heron auditor. |
 | 7 | `INSERT`, `UPDATE`, `DELETE` | The Ledger Quill: command the farm directly. |
 | 8 | `JOIN` | Connect the Bestiary to the logs; trade with neighbours. |
 | 9+ | Subqueries, CTEs, window functions | Seasonal trends, Mossgrandle's sleep cycle. |
+
+## Free play
+
+After the basics, lessons alternate with **free-play interludes**: a broad,
+loose objective reached however the player likes, using everything learned so
+far. There is no prescribed query and no failure state.
+
+- **Goal quests** show a checklist with progress bars ("Earn 80 coins from
+  selling", "Harvest 3 Glassberries", "Every creature in a good mood at the same
+  time"). Goals count progress *since the interlude started*, and each interlude
+  is themed around a farm event (a fair, a dry spell, an audit) that shapes the
+  strategy. The Dry Spell also lasts a set week, so it's a real stretch of play.
+- **Report quests** follow each goal quest: a character asks a question
+  ("How many eggs has Henbell laid since you arrived?") and the player types in the
+  answer, found with *any* query they like. Answers are checked against live data
+  when submitted, so they stay correct as the farm changes; ties are all accepted.
+- Hints in free play are strategy tips rather than queries, except the final
+  hint of a report, which shows one query that works.
 
 ## Beginner safety nets
 
@@ -115,10 +136,10 @@ Each creature's entry starts mostly as `???`. Fields are filled in by:
 
 ## Gamification
 
-- **XP and levels**: Piglet → Hog → Boss Hog → Query Swine 👑
+- **XP and levels**: Piglet → Hog → Boss Hog → Query Swine → Truffle Hunter → Grand Grunter → Hollow Legend 👑
 - **Coins** from selling harvests, eggs and pebbles, plus quest rewards.
 - **Bestiary completion** as the long-term collection goal.
-- **Badges**: Hello, Ledger · Green Trotters · Critter-ologist · Frost Detective · Hollow Hand
+- **Badges**: Hello, Ledger · Green Trotters · Critter-ologist · Frost Detective · Hollow Hand · Fair Favourite · Water Wise · Ghost Hunter · Ledger Keeper
 - **Streak**: consecutive real-world days played, with a small coin bonus.
 
 ## Data model (the Ledger)
@@ -138,7 +159,12 @@ Creature traits and quest answers live in game code, *not* in the database, so
 they can't be looked up — only deduced.
 
 `NULL` is deliberately avoided in early-chapter data (except empty plots'
-`crop`) so it can be introduced properly in chapter 6.
+`crop`) so it can be introduced properly in chapter 6, where the Nullkin starts
+leaving `NULL` sources and amounts in `farm_log`.
+
+The database has a schema version (`PRAGMA user_version`). `migrate()` in
+`src/data/schema.ts` upgrades older saves on load (v1 → v2 relaxed `farm_log`'s
+`NOT NULL` columns and added Echo wool), so players never lose progress.
 
 ## Night simulation rules (MVP)
 
@@ -151,6 +177,12 @@ they can't be looked up — only deduced.
 - **Sortoise**: digs up a shiny pebble.
 - **Chimnius**: +8 warmth on its plot, +5 on adjacent plots; creatures
   that dislike smoke on/next to it cough (−2 mood).
+- **Puddlewump**: waters its own and adjacent plots (moisture 3). Its own plot
+  is always soggy: Snoutroot there loses 15 growth per night instead of growing.
+- **Echolamb**: grows Echo wool; copies the previous night's creature log rows
+  as exact duplicates (new `id`s), which is what makes `DISTINCT` necessary.
+- **Nullkin**: never hungry. Writes its own `nibbled` rows with a `NULL`
+  source, and erases (`NULL`s) the `amount` of one other entry each night.
 - **Plots**: `warmth = temperature + bonuses`. Below 0 → frost, crop lost.
   Otherwise crops grow by their rate (halved if `moisture = 0`), +10 if tilled.
   Rain sets moisture to 3; otherwise it drops by 1.
@@ -167,7 +199,12 @@ they can't be looked up — only deduced.
   need engine changes.
 - **Emoji art** to start; can be swapped for SVG or pixel art later.
 
-## MVP scope
+## Current scope
+
+- Chapters 1–6 plus three free-play interludes: 53 quests, 7 creatures.
+- Chapter 7 (the Ledger Quill: `INSERT` / `UPDATE` / `DELETE`) is next.
+
+## Original MVP scope
 
 - Chapters 1–4 (27 quests) with Squeal, Henbell, Sortoise and Chimnius,
   including the frost mystery and the "why is Henbell coughing?" mystery.

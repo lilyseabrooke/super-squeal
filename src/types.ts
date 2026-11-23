@@ -10,18 +10,30 @@ export interface SystemEvent {
   params: SqlValue[];
 }
 
+export interface Stats {
+  queries: number;
+  harvested: number;
+  sold: number;
+  fed: number;
+  /** Coins earned from selling. */
+  earned: number;
+  harvestedBy: Record<string, number>;
+  soldBy: Record<string, number>;
+}
+
 export interface Progress {
   version: 1;
   questIndex: number;
   /** Id of the quest whose onStart has already run. */
   questStarted: string | null;
-  questStart: { day: number; sold: number; harvested: number };
+  /** Day and stats when the current quest began, for "since this quest started" goals. */
+  questStart: { day: number; stats: Stats };
   xp: number;
   discovered: string[];
   met: string[];
   badges: string[];
   hintLevel: Record<string, number>;
-  stats: { queries: number; harvested: number; sold: number; fed: number };
+  stats: Stats;
   streak: { count: number; last: string };
   quill: boolean;
   /** System changes made today, replayed after a rewind. */
@@ -75,10 +87,31 @@ export interface AnswerQuest extends QuestBase {
   correct: number;
 }
 
-export type Quest = QueryQuest | ActionQuest | AnswerQuest;
+export interface Goal {
+  label: string;
+  progress: (api: QuestApi) => { have: number; need: number };
+}
+
+/** Free play: a broad objective, reached however the player likes. */
+export interface GoalQuest extends QuestBase {
+  kind: 'goal';
+  goals: Goal[];
+}
+
+/** A question answered by typing a value the player found with their own query. */
+export interface ReportQuest extends QuestBase {
+  kind: 'report';
+  question: string;
+  /** Internal SQL. Any value in its first column is an accepted answer. */
+  expected: string;
+}
+
+export type Quest = QueryQuest | ActionQuest | AnswerQuest | GoalQuest | ReportQuest;
 
 export interface Chapter {
+  /** Lesson chapters are whole numbers; free-play interludes sit between them (4.5, 5.5…). */
   n: number;
   title: string;
   concept: string;
+  free?: boolean;
 }

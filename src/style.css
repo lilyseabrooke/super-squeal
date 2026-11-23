@@ -691,6 +691,70 @@ table.barn td:last-child {
   font-size: 0.9rem;
 }
 
+/* ───────── free play ───────── */
+
+.chip.small.free {
+  background: var(--green-soft);
+}
+
+.goals {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.goals li {
+  display: grid;
+  grid-template-columns: auto 1fr minmax(60px, 120px) 3.2rem;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 10px;
+  background: var(--panel-2);
+  font-size: 0.92rem;
+}
+
+.goals li.done .goal-label {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.report {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 0.8rem;
+}
+
+.report input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-family: var(--mono);
+  padding: 0.45rem 0.6rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--code-bg);
+  color: var(--ink);
+}
+
+.report input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 480px) {
+  .goals li {
+    grid-template-columns: auto 1fr 3.2rem;
+  }
+  .goals li .meter {
+    display: none;
+  }
+}
+
 /* ───────── ledger ───────── */
 
 textarea#sql {

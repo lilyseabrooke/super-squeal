@@ -2,7 +2,7 @@ import type { Database, SqlJsStatic, SqlValue } from 'sql.js';
 import { CROPS, GOODS, itemLabel } from './data/crops';
 import { ALL_TRAIT_IDS, SPECIES } from './data/creatures';
 import { QUESTS } from './data/quests';
-import { schemaSql } from './data/schema';
+import { migrate, schemaSql } from './data/schema';
 import { runNight } from './sim';
 import {
   BLANK,
@@ -13,10 +13,11 @@ import {
   resultsMatch,
   sameQuery,
   stripComments,
+  stripLiterals,
   tablesIn,
   type SchemaInfo,
 } from './sqlHelp';
-import type { NightReport, Progress, Quest, QuestApi, ResultSet } from './types';
+import type { GoalQuest, NightReport, Progress, Quest, QuestApi, ResultSet, Stats } from './types';
 
 export const SAVE_KEY = 'super-squeal-save-v1';
 
@@ -83,7 +84,10 @@ export const LEVELS = [
   { xp: 0, title: 'Piglet' },
   { xp: 60, title: 'Hog' },
   { xp: 150, title: 'Boss Hog' },
-  { xp: 300, title: 'Query Swine 👑' },
+  { xp: 300, title: 'Query Swine' },
+  { xp: 500, title: 'Truffle Hunter' },
+  { xp: 750, title: 'Grand Grunter' },
+  { xp: 1050, title: 'Hollow Legend 👑' },
 ];
 
 export const BADGES: { id: string; emoji: string; name: string; desc: string }[] = [
@@ -91,23 +95,31 @@ export const BADGES: { id: string; emoji: string; name: string; desc: string }[]
   { id: 'green_trotters', emoji: '🌱', name: 'Green Trotters', desc: 'Harvested your first crop.' },
   { id: 'critter_ologist', emoji: '🔎', name: 'Critter-ologist', desc: 'Discovered 6 Bestiary traits.' },
   { id: 'frost_detective', emoji: '❄️', name: 'Frost Detective', desc: 'Solved the mystery of the plots that didn’t freeze.' },
-  { id: 'hollow_hand', emoji: '🏡', name: 'Hollow Hand', desc: 'Finished every chapter so far.' },
+  { id: 'hollow_hand', emoji: '🏡', name: 'Hollow Hand', desc: 'Finished chapter 4.' },
+  { id: 'fair_favourite', emoji: '🎪', name: 'Fair Favourite', desc: 'Got your farm ready for the Autumn Fair.' },
+  { id: 'water_wise', emoji: '💧', name: 'Water Wise', desc: 'Kept the farm thriving through the dry spell.' },
+  { id: 'ghost_hunter', emoji: '👻', name: 'Ghost Hunter', desc: 'Caught the Nullkin with IS NULL.' },
+  { id: 'ledger_keeper', emoji: '📚', name: 'Ledger Keeper', desc: 'Passed the Ledger Audit.' },
 ];
 
 const HINT_COSTS = [0, 0, 2, 5];
+
+export function emptyStats(): Stats {
+  return { queries: 0, harvested: 0, sold: 0, fed: 0, earned: 0, harvestedBy: {}, soldBy: {} };
+}
 
 function defaultProgress(): Progress {
   return {
     version: 1,
     questIndex: 0,
     questStarted: null,
-    questStart: { day: 1, sold: 0, harvested: 0 },
+    questStart: { day: 1, stats: emptyStats() },
     xp: 0,
     discovered: [],
     met: ['Squeal'],
     badges: [],
     hintLevel: {},
-    stats: { queries: 0, harvested: 0, sold: 0, fed: 0 },
+    stats: emptyStats(),
     streak: { count: 0, last: '' },
     quill: false,
     replayToday: [],
@@ -170,8 +182,15 @@ export class Game implements QuestApi {
     try {
       const data = JSON.parse(raw);
       this.db = new this.SQL.Database(fromB64(data.db));
-      this.snapshot = fromB64(data.snapshot);
-      this.progress = { ...defaultProgress(), ...data.progress };
+      migrate(this.db);
+      const snap = new this.SQL.Database(fromB64(data.snapshot));
+      migrate(snap);
+      this.snapshot = snap.export();
+      snap.close();
+      const saved = data.progress ?? {};
+      this.progress = { ...defaultProgress(), ...saved, stats: { ...emptyStats(), ...saved.stats } };
+      // Saves from before stats snapshots: treat the current quest as starting now.
+      if (!this.progress.questStart?.stats) this.progress.questStart = { day: this.day, stats: structuredClone(this.progress.stats) };
       this.lastNight = data.lastNight ?? null;
       return true;
     } catch {
@@ -306,7 +325,7 @@ export class Game implements QuestApi {
     const q = this.currentQuest();
     if (!q || this.progress.questStarted === q.id) return;
     this.progress.questStarted = q.id;
-    this.progress.questStart = { day: this.day, sold: this.progress.stats.sold, harvested: this.progress.stats.harvested };
+    this.progress.questStart = { day: this.day, stats: structuredClone(this.progress.stats) };
     const msg = q.onStart?.(this);
     if (msg) this.onToast({ kind: 'info', title: 'Something stirs in the Hollow…', body: msg });
   }
@@ -340,7 +359,7 @@ export class Game implements QuestApi {
       this.completing = true;
       try {
         let q = this.currentQuest();
-        while (q && q.kind === 'action' && q.check(this)) {
+        while (q && ((q.kind === 'action' && q.check(this)) || (q.kind === 'goal' && this.goalsMet(q)))) {
           this.completeQuest();
           q = this.currentQuest();
         }
@@ -351,6 +370,17 @@ export class Game implements QuestApi {
     this.checkBadges();
     this.save();
     this.emit();
+  }
+
+  goalStatus(q: GoalQuest): { label: string; have: number; need: number; done: boolean }[] {
+    return q.goals.map((g) => {
+      const { have, need } = g.progress(this);
+      return { label: g.label, have, need, done: have >= need };
+    });
+  }
+
+  private goalsMet(q: GoalQuest): boolean {
+    return this.goalStatus(q).every((g) => g.done);
   }
 
   private checkBadges() {
@@ -366,7 +396,11 @@ export class Game implements QuestApi {
     if (this.progress.stats.harvested > 0) award('green_trotters');
     if (this.progress.discovered.length >= 6) award('critter_ologist');
     if (done('c4-warm')) award('frost_detective');
-    if (this.progress.questIndex >= QUESTS.length) award('hollow_hand');
+    if (done('c4-move')) award('hollow_hand');
+    if (done('f1-fair')) award('fair_favourite');
+    if (done('f2-dry')) award('water_wise');
+    if (done('c6-isnull')) award('ghost_hunter');
+    if (done('f3-nibbled')) award('ledger_keeper');
   }
 
   get bestiaryProgress(): { found: number; total: number } {
@@ -415,11 +449,34 @@ export class Game implements QuestApi {
     if (q.concept?.example && sameQuery(sql, q.concept.example)) {
       return `That's the example from the spell card. It shows how **${q.concept.title}** works using a different table, so it isn't the answer. Now use the same idea for your task: ${q.task}`;
     }
+    if (/(=|!=|<>)\s*null\b/i.test(stripLiterals(sql))) {
+      return '`= NULL` never matches anything, because NULL means "unknown" and nothing is ever *equal* to unknown. Use `IS NULL` (or `IS NOT NULL`) instead.';
+    }
     if (want.length && !want.every((t) => got.includes(t))) {
       const from = got.length ? `reads from \`${got.join('`, `')}\`` : "doesn't read from any table";
       return `This quest is about the \`${want[0]}\` table, but your query ${from}. Try \`FROM ${want[0]}\`.`;
     }
     return reason ?? 'Not quite what Keystone is after.';
+  }
+
+  /** Checks a typed answer for a report quest. Any value in the expected query's first column counts. */
+  submitReport(text: string): boolean {
+    const q = this.currentQuest();
+    if (!q || q.kind !== 'report') return false;
+    const given = text.trim();
+    if (!given) return false;
+    const accepted = this.execResult(q.expected).rows.map((r) => r[0]);
+    const num = Number(given.replace(/,/g, ''));
+    const ok = accepted.some((v) =>
+      typeof v === 'number' ? given !== '' && Number.isFinite(num) && Math.abs(num - v) < 0.01 : String(v).toLowerCase() === given.toLowerCase().replace(/^'(.*)'$/, '$1'),
+    );
+    if (ok) {
+      this.completeQuest();
+      this.afterChange();
+      return true;
+    }
+    this.onToast({ kind: 'warn', title: `"${given}" isn't what the Ledger says.`, body: 'Double-check your query (and that you ran it today, since the farm keeps changing).' });
+    return false;
   }
 
   answer(choice: number): boolean {
@@ -510,6 +567,8 @@ export class Game implements QuestApi {
           ],
           after: () => {
             this.progress.stats.harvested += n;
+            const by = this.progress.stats.harvestedBy;
+            by[p.crop!] = (by[p.crop!] ?? 0) + n;
             this.db.run("INSERT INTO farm_log (day, source, plot_id, event, amount) VALUES (?, 'Farmer', ?, 'harvested', ?)", [this.day, a.plot, n]);
           },
         };
@@ -543,6 +602,8 @@ export class Game implements QuestApi {
           sql,
           after: () => {
             this.progress.stats.sold += n;
+            this.progress.stats.earned += n * price;
+            this.progress.stats.soldBy[a.item] = (this.progress.stats.soldBy[a.item] ?? 0) + n;
           },
         };
       }

@@ -1,9 +1,23 @@
+import type { Database } from 'sql.js';
 import { CROPS, GOODS } from './crops';
 
 export const PLOT_ROWS = 3;
 export const PLOT_COLS = 4;
 export const STARTING_COINS = 20;
 export const WEATHER_DAYS = 365;
+
+/** Bump this and add a step to migrate() whenever the Ledger's shape changes. */
+export const SCHEMA_VERSION = 2;
+
+/** `source` and `amount` may be NULL: the Nullkin (chapter 6) erases them. */
+const FARM_LOG_TABLE = `CREATE TABLE farm_log (
+  id INTEGER PRIMARY KEY,
+  day INTEGER NOT NULL,
+  source TEXT,
+  plot_id INTEGER NOT NULL,
+  event TEXT NOT NULL,
+  amount INTEGER
+);`;
 
 function quote(s: string): string {
   return `'${s.replace(/'/g, "''")}'`;
@@ -71,14 +85,7 @@ CREATE TABLE weather (
   temperature INTEGER NOT NULL,
   sky TEXT NOT NULL
 );
-CREATE TABLE farm_log (
-  id INTEGER PRIMARY KEY,
-  day INTEGER NOT NULL,
-  source TEXT NOT NULL,
-  plot_id INTEGER NOT NULL,
-  event TEXT NOT NULL,
-  amount INTEGER NOT NULL
-);
+${FARM_LOG_TABLE}
 INSERT INTO farm (day, coins) VALUES (1, ${STARTING_COINS});
 INSERT INTO creatures (name, kind, emoji, plot_id, hunger, mood) VALUES ('Squeal', 'mud-beast', '🐷', 6, 7, 6);
 `);
@@ -108,7 +115,27 @@ INSERT INTO creatures (name, kind, emoji, plot_id, hunger, mood) VALUES ('Squeal
   parts.push(
     'INSERT INTO weather VALUES ' + w.map((x) => `(${x.day}, ${x.temperature}, ${quote(x.sky)})`).join(',\n') + ';',
   );
+  parts.push(`PRAGMA user_version = ${SCHEMA_VERSION};`);
   return parts.join('\n');
+}
+
+/** Upgrades a saved Ledger from an older version of the game, in place. */
+export function migrate(db: Database): void {
+  const version = Number(db.exec('PRAGMA user_version')[0]?.values[0]?.[0] ?? 0);
+  if (version < 2) {
+    db.run(`
+      ${FARM_LOG_TABLE.replace('farm_log', 'farm_log_v2')}
+      INSERT INTO farm_log_v2 SELECT id, day, source, plot_id, event, amount FROM farm_log;
+      DROP TABLE farm_log;
+      ALTER TABLE farm_log_v2 RENAME TO farm_log;
+    `);
+  }
+  // New goods are added idempotently so any older save picks them up.
+  for (const [item, g] of Object.entries(GOODS)) {
+    db.run('INSERT OR IGNORE INTO inventory VALUES (?, 0)', [item]);
+    db.run('INSERT OR IGNORE INTO market VALUES (?, ?)', [item, g.sellPrice]);
+  }
+  db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }
 
 export function plotPos(id: number): { row: number; col: number } {

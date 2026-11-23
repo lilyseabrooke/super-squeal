@@ -14,6 +14,8 @@ export interface Species {
   blurb: string;
   /** Takes a mood hit when standing on or next to Chimnius. */
   dislikesSmoke?: boolean;
+  /** Never gets hungry (and so never grumbles). */
+  ethereal?: boolean;
   traits: Trait[];
 }
 
@@ -66,9 +68,46 @@ export const SPECIES: Record<string, Species> = {
       { id: 'chimnius_smoke', label: 'Side effect', value: 'Its smoke makes creatures that dislike smoke cough', discover: 'quest' },
     ],
   },
+  Puddlewump: {
+    name: 'Puddlewump',
+    emoji: '💧',
+    kind: 'wander-puddle',
+    food: 'rainwater',
+    blurb: 'A knee-high puddle that walks. It leaves damp footprints that never quite dry, and it giggles when it rains.',
+    traits: [
+      { id: 'puddle_eats', label: 'Eats', value: 'Rainwater', discover: 'feed' },
+      { id: 'puddle_water', label: 'Night work', value: 'Waters its own plot and the plots beside it (moisture back to 3)', discover: 'quest' },
+      { id: 'puddle_rot', label: 'Side effect', value: 'Keeps its own plot so soggy that root crops (Snoutroot) rot instead of growing', discover: 'quest' },
+    ],
+  },
+  Nullkin: {
+    name: 'Nullkin',
+    emoji: '👻',
+    kind: 'label-eater',
+    food: 'spilled ink',
+    blurb: 'A shimmer in the corner of your eye. When you look straight at it, it is not there. Neither are some of your notes.',
+    ethereal: true,
+    traits: [
+      { id: 'nullkin_eats', label: 'Eats', value: 'Spilled ink', discover: 'feed' },
+      { id: 'nullkin_nibble', label: 'Night work', value: "Nibbles the Ledger: its own entries have no source, and it erases one other entry's amount each night, leaving NULL", discover: 'quest' },
+      { id: 'nullkin_hunger', label: 'Hunger', value: 'Never gets hungry. Ghosts don’t, apparently.', discover: 'quest' },
+    ],
+  },
+  Echolamb: {
+    name: 'Echolamb',
+    emoji: '🐑',
+    kind: 'echo-sheep',
+    food: 'clover',
+    blurb: 'A fluffy sheep whose bleat comes back a second later. Then again. Then again.',
+    traits: [
+      { id: 'echolamb_eats', label: 'Eats', value: 'Clover', discover: 'feed' },
+      { id: 'echolamb_wool', label: 'Night work', value: 'Grows a bundle of Echo wool', discover: 'quest' },
+      { id: 'echolamb_echo', label: 'Side effect', value: "Repeats yesterday: copies the previous night's log entries, creating exact duplicates", discover: 'quest' },
+    ],
+  },
 };
 
 /** Creatures planned for later chapters, shown as silhouettes in the Bestiary. */
-export const COMING_SOON = ['Puddlewump', 'Glimmerwick', 'Tumblecrag', 'Mossgrandle', 'Moolump', 'Nullkin', 'Echolamb', 'Twinnet'];
+export const COMING_SOON = ['Glimmerwick', 'Tumblecrag', 'Mossgrandle', 'Moolump', 'Twinnet'];
 
 export const ALL_TRAIT_IDS = Object.values(SPECIES).flatMap((s) => s.traits.map((t) => t.id));

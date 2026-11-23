@@ -108,6 +108,7 @@ export function mountUI(root: HTMLElement, game: Game) {
   let selectedPlot: number | null = null;
   let sideTab: 'schema' | 'bestiary' | 'badges' = 'schema';
   let lastOutcome: QueryOutcome | null = null;
+  let reportDraft = '';
   const openTables = new Set<string>();
 
   // ───────── toasts ─────────
@@ -267,7 +268,7 @@ export function mountUI(root: HTMLElement, game: Game) {
     const q = game.currentQuest();
     const el = $('quest');
     if (!q) {
-      el.innerHTML = `<div class="keystone"><div class="avatar" aria-hidden="true">🌾</div><div class="bubble"><p><strong>You did it!</strong> You've finished every chapter written so far. The Hollow is quieter now… but strange footprints lead toward the pond.</p><p><strong>Chapter 5: GROUP BY</strong> is coming soon. Until then the Ledger is yours. Keep farming and keep asking it questions!</p></div></div>`;
+      el.innerHTML = `<div class="keystone"><div class="avatar" aria-hidden="true">🌾</div><div class="bubble"><p><strong>You did it!</strong> You've finished every chapter written so far. The Hollow is quieter now… but strange footprints lead toward the pond.</p><p><strong>Chapter 7: The Ledger Quill</strong> (writing your own <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code>) is coming soon. Until then the Ledger is yours. Keep farming and keep asking it questions!</p></div></div>`;
       return;
     }
     const ch = chapterOf(q);
@@ -305,11 +306,32 @@ export function mountUI(root: HTMLElement, game: Game) {
         .join('')}</div>`;
     } else if (q.kind === 'action') {
       interaction = `<p class="muted small">👈 Use the farm panels to do this.</p>`;
+    } else if (q.kind === 'goal') {
+      interaction = `<ul class="goals">${game
+        .goalStatus(q)
+        .map(
+          (g) => `<li class="${g.done ? 'done' : ''}">
+            <span class="goal-check" aria-hidden="true">${g.done ? '✅' : '⬜'}</span>
+            <span class="goal-label">${esc(g.label)}</span>
+            ${meter(Math.min(Math.max(g.have, 0), g.need), g.need, g.done ? 'good' : 'meh', g.label)}
+            <span class="small num">${Math.max(g.have, 0)}/${g.need}</span>
+          </li>`,
+        )
+        .join('')}</ul>`;
+    } else if (q.kind === 'report') {
+      interaction = `<form class="report" data-form="report">
+        <label for="report-answer"><strong>❓ ${md(q.question)}</strong></label>
+        <div class="row">
+          <input id="report-answer" autocomplete="off" placeholder="Your answer" value="${esc(reportDraft)}" />
+          <button class="btn primary" type="submit">Submit</button>
+        </div>
+        <p class="muted small">Find it with any query you like, then type the answer here.</p>
+      </form>`;
     }
 
     el.innerHTML = `
       <div class="quest-meta">
-        <span class="chip small">Chapter ${ch.n} · ${esc(ch.concept)}</span>
+        <span class="chip small ${ch.free ? 'free' : ''}">${ch.free ? '🌻 Free play' : `Chapter ${ch.n} · ${esc(ch.concept)}`}</span>
         <span class="muted small">${esc(ch.title)} · Quest ${idx + 1} of ${QUESTS.length}</span>
       </div>
       <h2 class="quest-title">${esc(q.title)}</h2>
@@ -493,6 +515,21 @@ export function mountUI(root: HTMLElement, game: Game) {
         renderSide();
         break;
     }
+  });
+
+  root.addEventListener('submit', (e) => {
+    const form = e.target as HTMLFormElement;
+    if (form.dataset.form !== 'report') return;
+    e.preventDefault();
+    // Clear before submitting: a correct answer redraws the panel for the next question.
+    const answer = reportDraft;
+    reportDraft = '';
+    if (!game.submitReport(answer)) reportDraft = answer;
+  });
+
+  root.addEventListener('input', (e) => {
+    const el = e.target as HTMLInputElement;
+    if (el.id === 'report-answer') reportDraft = el.value;
   });
 
   root.addEventListener('change', (e) => {

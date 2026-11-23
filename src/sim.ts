@@ -51,13 +51,16 @@ export function runNight(db: Database): NightReport {
   const addItem = (item: string, n: number) => db.run('UPDATE inventory SET quantity = quantity + ? WHERE item = ?', [n, item]);
 
   // Everyone gets hungrier; only fed, cheerful creatures work.
-  for (const c of creatures) c.hunger = clamp(c.hunger + 2);
+  for (const c of creatures) if (!SPECIES[c.name]?.ethereal) c.hunger = clamp(c.hunger + 2);
   const works = new Map(creatures.map((c) => [c.id, c.hunger < 8 && c.mood > 3]));
   const moodDelta = new Map(creatures.map((c) => [c.id, 0]));
   const bump = (id: number, d: number) => moodDelta.set(id, (moodDelta.get(id) ?? 0) + d);
 
   const chimniuses = creatures.filter((c) => c.name === 'Chimnius');
   const plotById = new Map(plots.map((p) => [p.id, p]));
+  const watered = new Set<number>();
+  const soggy = new Set<number>();
+  let nullkinPlot: number | null = null;
 
   for (const c of creatures) {
     const working = works.get(c.id);
@@ -89,6 +92,40 @@ export function runNight(db: Database): NightReport {
       case 'Chimnius':
         log(c.name, c.plot_id, 'puffed_smoke', 1);
         break;
+      case 'Puddlewump':
+        if (working) {
+          for (const p of plots) {
+            if (plotDistance(c.plot_id, p.id) <= 1) {
+              watered.add(p.id);
+              log(c.name, p.id, 'watered', 1);
+            }
+          }
+          lines.push(`💧 Puddlewump watered the plots around plot ${c.plot_id}.`);
+        }
+        // Wet or not, a puddle's own plot is always soggy.
+        soggy.add(c.plot_id);
+        break;
+      case 'Echolamb': {
+        if (working) {
+          addItem('echo_wool', 1);
+          log(c.name, c.plot_id, 'grew_wool', 1);
+          lines.push('🧶 Echolamb grew a bundle of wool.');
+        }
+        // "Repeats yesterday": copies the previous night's entries as exact duplicates.
+        const before = Number(all<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM farm_log')[0].n);
+        db.run(
+          `INSERT INTO farm_log (day, source, plot_id, event, amount)
+           SELECT day, source, plot_id, event, amount FROM farm_log
+           WHERE day = ? AND source IS NOT NULL AND source NOT IN ('Echolamb', 'Frost', 'Farmer')`,
+          [day - 1],
+        );
+        const echoed = Number(all<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM farm_log')[0].n) - before;
+        if (echoed) lines.push(`🐑 Baa… baa… baa… (the Ledger feels oddly repetitive).`);
+        break;
+      }
+      case 'Nullkin':
+        nullkinPlot = c.plot_id;
+        break;
     }
   }
 
@@ -104,7 +141,9 @@ export function runNight(db: Database): NightReport {
 
   // Hunger affects mood.
   for (const c of creatures) {
-    if (c.hunger >= 8) {
+    if (SPECIES[c.name]?.ethereal) {
+      // Ghosts don't eat, so they neither grumble nor perk up from food.
+    } else if (c.hunger >= 8) {
       bump(c.id, -1);
       log(c.name, c.plot_id, 'grumbled', 1);
       lines.push(`😠 ${c.name} grumbled with hunger.`);
@@ -126,7 +165,7 @@ export function runNight(db: Database): NightReport {
       else if (d === 1) bonus += 5;
     }
     p.warmth = weather.temperature + bonus;
-    p.moisture = weather.sky === 'rain' ? 3 : Math.max(0, p.moisture - 1);
+    p.moisture = weather.sky === 'rain' || watered.has(p.id) ? 3 : Math.max(0, p.moisture - 1);
 
     if (p.warmth < 0) {
       frosted++;
@@ -136,6 +175,11 @@ export function runNight(db: Database): NightReport {
         p.crop = null;
         p.growth = 0;
       }
+    } else if (p.crop === 'snoutroot' && soggy.has(p.id) && p.growth < 100) {
+      // Root crops rot in a puddle's soggy soil instead of growing.
+      p.growth = Math.max(0, p.growth - 15);
+      log('Puddlewump', p.id, 'rotted', 1);
+      lines.push(`🤢 The Snoutroot on plot ${p.id} is rotting in soggy soil.`);
     } else if (p.crop && p.growth < 100) {
       const crop = CROPS[p.crop];
       const rate = crop ? crop.rate : 25;
@@ -153,6 +197,18 @@ export function runNight(db: Database): NightReport {
   }
   if (weather.sky === 'rain') lines.push('🌧️ Rain soaked every plot.');
   if (frosted) lines.push(`❄️ Frost hit ${frosted} plot${frosted === 1 ? '' : 's'}${lost ? ` — ${lost} crop${lost === 1 ? '' : 's'} lost!` : '.'}`);
+
+  // The Nullkin nibbles last, after everything else has been written down.
+  if (nullkinPlot !== null) {
+    db.run(
+      `UPDATE farm_log SET amount = NULL WHERE id = (
+         SELECT MIN(id) FROM farm_log WHERE day = ? AND amount IS NOT NULL AND source IS NOT NULL AND source != 'Frost'
+       )`,
+      [day],
+    );
+    db.run('INSERT INTO farm_log (day, source, plot_id, event, amount) VALUES (?, NULL, ?, ?, 1)', [day, nullkinPlot, 'nibbled']);
+    lines.push('👻 Something rustled the pages of the Ledger…');
+  }
 
   const ready = plots.filter((p) => p.crop && p.growth >= 100).length;
   if (ready) lines.push(`✨ ${ready} plot${ready === 1 ? ' is' : 's are'} ready to harvest.`);

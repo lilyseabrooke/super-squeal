@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { QUESTS } from '../src/data/quests';
-import { BLANKS_MESSAGE, isSqlTemplate, sameQuery } from '../src/sqlHelp';
+import { BLANKS_MESSAGE, isSqlTemplate, sameQuery, tablesIn } from '../src/sqlHelp';
 import type { Quest } from '../src/types';
 import { newGame, solveCurrent } from './helpers';
 
@@ -86,6 +86,20 @@ describe('what a beginner sees', () => {
     const g = await newGame();
     const msg = g.runPlayerQuery('SELECT * FROM plots WHERE hunger > 5').error ?? '';
     expect(msg).toMatch(/lives in the `creatures` table/);
+  });
+
+  it('spell-card examples use a different table from the answer, so they never give it away', () => {
+    for (const q of QUESTS) {
+      if (q.kind !== 'query' || !q.concept?.example) continue;
+      const answerTables = tablesIn(q.expected);
+      for (const t of tablesIn(q.concept.example)) expect(answerTables, `${q.id} example uses ${t}`).not.toContain(t);
+    }
+  });
+
+  it('= NULL gets an explanation of IS NULL', async () => {
+    const g = await newGame();
+    while (g.currentQuest()?.id !== 'c6-isnull') solveCurrent(g);
+    expect(g.runPlayerQuery('SELECT * FROM farm_log WHERE source = NULL').feedback?.message).toMatch(/IS NULL/);
   });
 
   it('the right idea on the wrong table says which table the quest wants', async () => {

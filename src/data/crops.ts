@@ -20,6 +20,7 @@ export const CROPS: Record<string, Crop> = {
 export const GOODS: Record<string, { label: string; emoji: string; sellPrice: number }> = {
   egg: { label: 'Egg', emoji: '🥚', sellPrice: 4 },
   shiny_pebble: { label: 'Shiny pebble', emoji: '🪨', sellPrice: 3 },
+  echo_wool: { label: 'Echo wool', emoji: '🧶', sellPrice: 9 },
 };
 
 export function itemEmoji(item: string): string {
