@@ -61,7 +61,7 @@ Each creature's entry starts mostly as `???`. Fields are filled in by:
 | **Sortoise** 🐢 | Medium | A tidy tortoise. Digs up shiny pebbles. The `ORDER BY` tutor. |
 | **Chimnius** 🏭 | Not obvious | A walking smokestack. Warms nearby plots (frost protection), but its smoke makes Henbell cough. |
 | **Puddlewump** 💧 | Medium | A walking puddle. Waters neighbours, but rots root crops if left too long. |
-| **Glimmerwick** 🕯️ | Not obvious | A candle-moth. Pollinates only at night; drawn to Chimnius's glow. |
+| **Glimmerwick** 🕯️ | Not obvious | A candle-moth. Each night it flies off to pollinate Sunpuffs, and only Sunpuffs. |
 | **Tumblecrag** 🪨 | Medium | A rolling boulder. Tills for free, sometimes flattens fences. |
 | **Mossgrandle** 🌿 | Very hidden | Sleeps 6 days, then fertilises everything in one burst. |
 | **Moolump** 🐄 | Fairly obvious | A cow-shaped grassy mound. Gives milk; becomes a hill if never moved. |
@@ -100,7 +100,8 @@ Each creature's entry starts mostly as `???`. Fields are filled in by:
 | 🌻 | Free play | **The Ledger Audit** — impress a stern heron auditor. |
 | 7 | `UPDATE`, `INSERT`, `DELETE` | The farm grows to 48 plots and 14 creatures; the Ledger Quill makes running it bearable. |
 | 🌻 | Free play | **The Big Farm** — 30 plots growing at once, 40 harvests, 300 coins. |
-| 8 | `JOIN` | Connect the Bestiary to the logs; trade with neighbours. |
+| 8 | `JOIN … ON`, aliases, `JOIN` + aggregates, `LEFT JOIN` | Glimmerwick's log only says *where* it went; joining to `plots` reveals *what* it visits. |
+| 🌻 | Free play | **Lantern Night** — Sunpuff garlands; the trap of counting rows after a join. |
 | 9+ | Subqueries, CTEs, window functions | Seasonal trends, Mossgrandle's sleep cycle. |
 
 ## The Ledger Quill (chapter 7)
@@ -220,6 +221,10 @@ when the tab is hidden) so a big farm stays fast.
   is always soggy: Snoutroot there loses 15 growth per night instead of growing.
 - **Echolamb**: grows Echo wool; copies the previous night's creature log rows
   as exact duplicates (new `id`s), which is what makes `DISTINCT` necessary.
+- **Glimmerwick**: flies anywhere on the farm to the three least-grown Sunpuffs
+  (+15 growth each) and logs `pollinated` with only the `plot_id`, so finding out
+  what it visits takes a `JOIN` to `plots`. The night report just says "something
+  glowing visited plots 4, 7 and 25".
 - **Nullkin**: never hungry. Writes its own `nibbled` rows with a `NULL`
   source, and erases (`NULL`s) the `amount` of one other entry each night.
 - **Plots**: `warmth = temperature + bonuses`. Below 0 → frost, crop lost.
@@ -240,8 +245,8 @@ when the tab is hidden) so a big farm stays fast.
 
 ## Current scope
 
-- Chapters 1–7 plus four free-play interludes: 66 quests, 7 species (14 creatures on the Big Farm).
-- Chapter 8 (`JOIN`) is next.
+- Chapters 1–8 plus five free-play interludes: 76 quests, 8 species (15 creatures on the Big Farm).
+- Chapter 9 (subqueries and CTEs) is next.
 
 ## Original MVP scope
 
