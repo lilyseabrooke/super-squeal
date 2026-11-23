@@ -38,3 +38,10 @@ npm run preview  # serve the built site
 
 The whole game runs in the browser with [sql.js](https://sql.js.org) (SQLite
 compiled to WebAssembly). Progress is saved in `localStorage`.
+
+## Deployment
+
+Deployed on Vercel: **https://super-squeal.vercel.app**
+
+Every push to the production branch redeploys automatically. Other branches get
+their own preview URLs. Build settings live in `vercel.json`.
