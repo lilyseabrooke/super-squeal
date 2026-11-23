@@ -102,7 +102,9 @@ Each creature's entry starts mostly as `???`. Fields are filled in by:
 | 🌻 | Free play | **The Big Farm** — 30 plots growing at once, 40 harvests, 300 coins. |
 | 8 | `JOIN … ON`, aliases, `JOIN` + aggregates, `LEFT JOIN` | Glimmerwick's log only says *where* it went; joining to `plots` reveals *what* it visits. |
 | 🌻 | Free play | **Lantern Night** — Sunpuff garlands; the trap of counting rows after a join. |
-| 9+ | Subqueries, CTEs, window functions | Seasonal trends, Mossgrandle's sleep cycle. |
+| 9 | Scalar subqueries, `IN (SELECT …)`, subqueries in `FROM`, `WITH` (CTEs) | The land office: buy parcels until the farm is too big to see; the Ledger becomes your eyes. |
+| 🌻 | Free play | **The Land Rush** — own all six parcels, 300 plots growing at once. |
+| 10+ | Window functions | Seasonal trends, rankings, Mossgrandle's sleep cycle. |
 
 ## The Ledger Quill (chapter 7)
 
@@ -123,9 +125,9 @@ explains which law it broke.
 |---|---|---|
 | `creatures` | lower `hunger` (feed), change `plot_id` (move) | raising hunger, changing mood, adding or deleting creatures |
 | `plots` | raise `moisture` up to 3 (water); `crop` NULL→crop with `growth = 0` (plant, uses a seed); crop→NULL (harvest if ripe, otherwise uproot) | writing `growth`, `tilled`, `warmth`; swapping one crop for another |
-| `orders` | `INSERT` buy (`'sunpuff_seed'`) and sell orders, filled immediately | editing or deleting past orders, buying what you can't afford, selling what you don't have |
+| `orders` | `INSERT` buy (`'sunpuff_seed'`, or a parcel like `'Mossy Hollow'`) and sell orders, filled immediately | editing or deleting past orders, buying what you can't afford, selling what you don't have |
 | `farm_log` | `DELETE` (tidy up) | inserting or updating (forging history) |
-| `farm`, `inventory`, `market`, `seeds`, `weather` | nothing directly | writing coins, items, prices or weather |
+| `farm`, `inventory`, `market`, `seeds`, `weather`, `land` | nothing directly | writing coins, items, prices, weather or deeds |
 
 Side effects are applied in a fixed order (buys → plantings → harvests → sells), so
 one write can buy seeds and plant them, or harvest and sell. Structural SQL
@@ -134,6 +136,22 @@ a regretted `DELETE`.
 
 The Barn buttons also record their trades in `orders`, so the table tells the
 whole story.
+
+## The land office (chapter 9): a farm too big to see
+
+Chapter 9 turns the coins players have piled up into a reason to need SQL. The
+`land` table lists six 8×8 parcels (64 plots each, 400 to 3,000 coins), each with
+resident creatures. Land is bought only by writing an order
+(`INSERT INTO orders … VALUES ('buy', 'Mossy Hollow', 1)`). There's no Buy
+button, though the Barn lists parcels with a "Copy order into Ledger" shortcut.
+Parcels never touch each other, so creature effects stay within a parcel.
+
+Once the farm has more than one area, the farm panel shows **one area at a
+time** (the home farm, or one parcel), with tabs, and the creature list shows
+only who's in that area. "Showing 64 of 304 plots. The Ledger can see them
+all." Every plot has a `field` column, so questions like "which field has the
+most dry plots?" are one `GROUP BY` away. A fully bought farm has 432 plots and
+about 40 creatures, and a test plays the whole Land Rush through SQL alone.
 
 ## Free play
 
@@ -169,7 +187,7 @@ far. There is no prescribed query and no failure state.
 
 ## Gamification
 
-- **XP and levels**: Piglet → Hog → Boss Hog → Query Swine → Truffle Hunter → Grand Grunter → Hollow Legend → Ledger Mythic → Keeper of Connections 👑
+- **XP and levels**: Piglet → Hog → Boss Hog → Query Swine → Truffle Hunter → Grand Grunter → Hollow Legend → Ledger Mythic → Keeper of Connections → Lord of the Land 👑
 - **Coins** from selling harvests, eggs and pebbles, plus quest rewards.
 - **Bestiary completion** as the long-term collection goal.
 - **Badges**: Hello, Ledger · Green Trotters · Critter-ologist · Frost Detective · Hollow Hand · Fair Favourite · Water Wise · Ghost Hunter · Ledger Keeper
@@ -181,13 +199,14 @@ far. There is no prescribed query and no failure state.
 |---|---|
 | `farm` | `day`, `coins` (one row) |
 | `creatures` | `id`, `name`, `kind`, `emoji`, `plot_id`, `hunger` (0–10), `mood` (0–10) |
-| `plots` | `id`, `row`, `col`, `crop`, `growth` (0–100), `moisture`, `warmth`, `tilled` |
+| `plots` | `id`, `row`, `col`, `crop`, `growth` (0–100), `moisture`, `warmth`, `tilled`, `field` |
 | `inventory` | `item`, `quantity` |
 | `market` | `item`, `sell_price` |
 | `seeds` | `crop`, `price`, `nights_to_grow` |
 | `weather` | `day`, `temperature`, `sky` |
 | `farm_log` | `id`, `day`, `source`, `plot_id`, `event`, `amount` |
 | `orders` | `id`, `day`, `action` (`buy`/`sell`), `item`, `quantity`, `total` |
+| `land` | `name`, `plots`, `price`, `owned` |
 
 Creature traits and quest answers live in game code, *not* in the database, so
 they can't be looked up — only deduced.
@@ -198,7 +217,7 @@ leaving `NULL` sources and amounts in `farm_log`.
 
 The database has a schema version (`PRAGMA user_version`). `migrate()` in
 `src/data/schema.ts` upgrades older saves on load (v1 → v2 relaxed `farm_log`'s
-`NOT NULL` columns and added Echo wool; v2 → v3 added `orders`), so players
+`NOT NULL` columns and added Echo wool; v2 → v3 added `orders`; v3 → v4 added `plots.field` and `land`), so players
 never lose progress.
 
 Plot positions come from each plot's `row` and `col` (not its id), so the farm
@@ -245,8 +264,8 @@ when the tab is hidden) so a big farm stays fast.
 
 ## Current scope
 
-- Chapters 1–8 plus five free-play interludes: 76 quests, 8 species (15 creatures on the Big Farm).
-- Chapter 9 (subqueries and CTEs) is next.
+- Chapters 1–9 plus six free-play interludes: 87 quests, 8 species, up to 432 plots and about 40 creatures.
+- Chapter 10 (window functions) is next.
 
 ## Original MVP scope
 

@@ -92,7 +92,8 @@ export const LEVELS = [
   { xp: 750, title: 'Grand Grunter' },
   { xp: 1050, title: 'Hollow Legend' },
   { xp: 1400, title: 'Ledger Mythic' },
-  { xp: 1700, title: 'Keeper of Connections 👑' },
+  { xp: 1700, title: 'Keeper of Connections' },
+  { xp: 2100, title: 'Lord of the Land 👑' },
 ];
 
 export const BADGES: { id: string; emoji: string; name: string; desc: string }[] = [
@@ -109,6 +110,9 @@ export const BADGES: { id: string; emoji: string; name: string; desc: string }[]
   { id: 'big_farmer', emoji: '🚜', name: 'Big Farmer', desc: 'Ran all 48 plots of the Big Farm.' },
   { id: 'matchmaker', emoji: '🔗', name: 'Matchmaker', desc: 'Found the lonely plots with a LEFT JOIN.' },
   { id: 'lantern_bearer', emoji: '🏮', name: 'Lantern Bearer', desc: 'Grew the garlands for Lantern Night.' },
+  { id: 'landowner', emoji: '🗺️', name: 'Landowner', desc: 'Bought your first parcel of land.' },
+  { id: 'nesting_doll', emoji: '🪆', name: 'Nesting Doll', desc: 'Wrote your first CTE with WITH.' },
+  { id: 'land_baron', emoji: '🏰', name: 'Land Baron', desc: 'Owned every parcel in the valley.' },
 ];
 
 const HINT_COSTS = [0, 0, 2, 5];
@@ -436,6 +440,9 @@ export class Game implements QuestApi {
     if (done('f4-big')) award('big_farmer');
     if (done('c8-empty')) award('matchmaker');
     if (done('f5-lantern')) award('lantern_bearer');
+    if (Number(this.scalar('SELECT COUNT(*) FROM land WHERE owned = 1')) > 0) award('landowner');
+    if (done('c9-cte')) award('nesting_doll');
+    if (Number(this.scalar('SELECT COUNT(*) FROM land WHERE owned = 0')) === 0) award('land_baron');
   }
 
   get bestiaryProgress(): { found: number; total: number } {

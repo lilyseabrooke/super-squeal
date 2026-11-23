@@ -260,6 +260,10 @@ summary:focus-visible {
   border-color: transparent;
 }
 
+.btn.night:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--night) 85%, black);
+}
+
 .btn.ghost {
   background: transparent;
 }
@@ -742,6 +746,25 @@ table.barn td:last-child {
 .feedback.wrote ul {
   margin: 0.3rem 0 0;
   padding-left: 1.2rem;
+}
+
+/* ───────── areas (a farm too big to see at once) ───────── */
+
+.area-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.4rem;
+}
+
+.area-tabs .tab {
+  font-size: 0.82rem;
+  padding: 0.25rem 0.45rem;
+}
+
+.area-note {
+  margin: 0 0 0.5rem;
 }
 
 /* ───────── free play ───────── */

@@ -214,6 +214,9 @@ describe('old saves', () => {
         INSERT INTO old_log SELECT * FROM farm_log; DROP TABLE farm_log; ALTER TABLE old_log RENAME TO farm_log;
         DELETE FROM inventory WHERE item = 'echo_wool'; DELETE FROM market WHERE item = 'echo_wool';
         DROP TABLE orders;
+        DROP TABLE land;
+        CREATE TABLE old_plots (id INTEGER PRIMARY KEY, row INTEGER NOT NULL, col INTEGER NOT NULL, crop TEXT, growth INTEGER NOT NULL, moisture INTEGER NOT NULL, warmth INTEGER NOT NULL, tilled INTEGER NOT NULL);
+        INSERT INTO old_plots SELECT id, row, col, crop, growth, moisture, warmth, tilled FROM plots; DROP TABLE plots; ALTER TABLE old_plots RENAME TO plots;
         PRAGMA user_version = 0;`);
     };
     toV1(g1.db);
@@ -228,6 +231,8 @@ describe('old saves', () => {
     expect(Number(g2.scalar('SELECT COUNT(*) FROM farm_log'))).toBe(rowsBefore);
     expect(Number(g2.scalar('SELECT COUNT(*) FROM orders'))).toBe(0);
     expect(Number(g2.scalar("SELECT COUNT(*) FROM inventory WHERE item = 'echo_wool'"))).toBe(1);
+    expect(Number(g2.scalar('SELECT COUNT(*) FROM land WHERE owned = 0'))).toBe(6);
+    expect(g2.all('SELECT DISTINCT field FROM plots').map((r) => r.field)).toEqual(['Home field']);
     g2.db.run("INSERT INTO farm_log (day, source, plot_id, event, amount) VALUES (1, NULL, 1, 'nibbled', NULL)");
     g2.rewind(); // the snapshot was upgraded too
     expect(Number(g2.scalar('PRAGMA user_version'))).toBe(SCHEMA_VERSION);
@@ -306,5 +311,19 @@ describe('Lantern Night', () => {
     expect(counted).toBeLessThanOrEqual(3 * nights);
     const raw = Number(g.scalar("SELECT COUNT(*) FROM farm_log WHERE event = 'pollinated' AND day >= ?", [start]));
     expect(raw).toBeGreaterThan(counted); // the echoes are really there
+  });
+});
+
+describe('v4 upgrade of a chapter 7 farm', () => {
+  it('puts the East and South field plots in the right fields', async () => {
+    const kv = memoryKV();
+    const g = await newGame(kv);
+    while (g.currentQuest()?.id !== 'c7-morning') solveCurrent(g);
+    // Pretend this farm predates the field column.
+    g.db.run(`CREATE TABLE p3 AS SELECT id, row, col, crop, growth, moisture, warmth, tilled FROM plots; DROP TABLE plots; ALTER TABLE p3 RENAME TO plots; DROP TABLE land; PRAGMA user_version = 3;`);
+    g.flush();
+    const g2 = await newGame(kv);
+    const counts = Object.fromEntries(g2.all<{ field: string; n: number }>('SELECT field, COUNT(*) AS n FROM plots GROUP BY field').map((r) => [r.field, r.n]));
+    expect(counts).toEqual({ 'East field': 12, 'Home field': 12, 'South field': 24 });
   });
 });

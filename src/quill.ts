@@ -1,6 +1,7 @@
 import type { Database, SqlValue } from 'sql.js';
 import { CROPS, GOODS, itemLabel } from './data/crops';
 import { speciesOf } from './data/creatures';
+import { buyLand, LAND_PARCELS } from './data/schema';
 import { stripLiterals } from './sqlHelp';
 import type { ResultSet, Stats } from './types';
 
@@ -28,6 +29,7 @@ const KEYS: Record<string, string> = {
   weather: 'day',
   farm_log: 'id',
   orders: 'id',
+  land: 'name',
 };
 
 /** A write the Ledger refuses. The message is shown to the player as Keystone's explanation. */
@@ -117,6 +119,9 @@ function enforce(host: QuillHost, changes: Map<string, TableDiff>): Enforced {
   if (touched(get('farm'))) throw new LawError("🪙 The Ledger won't let you write your own coins, or change the day. Coins come from trading: add a row to `orders`.");
   if (touched(get('market')) || touched(get('seeds'))) throw new LawError('Prices are set by the Hollow’s market, not by you. Nice try!');
   if (touched(get('weather'))) throw new LawError('Not even the Quill can change the weather.');
+  if (touched(get('land'))) {
+    throw new LawError("Land changes hands at Mayor Thimble's office, not by editing the deeds! Buy a parcel with an order: `INSERT INTO orders (action, item, quantity) VALUES ('buy', 'Mossy Hollow', 1);`");
+  }
   if (touched(get('inventory'))) {
     throw new LawError('The barn changes by itself when you plant, harvest or trade. To buy or sell, add a row to `orders` instead.');
   }
@@ -192,6 +197,9 @@ function enforce(host: QuillHost, changes: Map<string, TableDiff>): Enforced {
   const coins = () => Number(db.exec('SELECT coins FROM farm')[0].values[0][0]);
   const addItem = (item: string, n: number) => db.run('UPDATE inventory SET quantity = quantity + ? WHERE item = ?', [n, item]);
 
+  const q = (stats.quill ??= {});
+  const bump = (k: string, n: number) => n && (q[k] = (q[k] ?? 0) + n);
+
   // ── orders: new rows only. Buys first (so seeds can be planted in the same write), sells last. ──
   const ord = get('orders');
   if (ord.updated.length || ord.deleted.length) throw new LawError('Orders are final once placed. You can only add new ones.');
@@ -203,8 +211,20 @@ function enforce(host: QuillHost, changes: Map<string, TableDiff>): Enforced {
     return { id: Number(o.id), action, item: String(o.item ?? ''), n };
   });
   for (const o of orders.filter((x) => x.action === 'buy')) {
+    const parcel = LAND_PARCELS.find((p) => p.name.toLowerCase() === o.item.toLowerCase());
+    if (parcel) {
+      if (o.n !== 1) throw new LawError(`There's only one ${parcel.name}! Order a \`quantity\` of 1.`);
+      if (Number(db.exec('SELECT owned FROM land WHERE name = ?', [parcel.name])[0]?.values[0]?.[0])) throw new LawError(`You already own ${parcel.name}.`);
+      if (parcel.price > coins()) throw new LawError(`${parcel.name} costs ${parcel.price} coins, but you only have ${coins()}.`);
+      db.run('UPDATE farm SET coins = coins - ?', [parcel.price]);
+      buyLand(db, parcel.name, host.day);
+      db.run('UPDATE orders SET item = ?, action = ?, day = ?, total = ? WHERE id = ?', [parcel.name, 'buy', host.day, parcel.price, o.id]);
+      effects.push(`🗺️ Bought ${parcel.name} for ${parcel.price} coins: ${parcel.residents.length} creatures live there (${parcel.residents.map((r) => r[0]).join(', ')}).`);
+      bump('land', 1);
+      continue;
+    }
     const crop = CROPS[o.item.replace(/_seed$/, '')];
-    if (!crop) throw new LawError(`The market only sells seeds. Try an item like \`'sunpuff_seed'\` (the \`seeds\` table lists them).`);
+    if (!crop) throw new LawError("The market sells seeds (like `'sunpuff_seed'`) and Mayor Thimble sells land (the `land` table lists parcels).");
     const cost = crop.seedPrice * o.n;
     if (cost > coins()) throw new LawError(`That order costs ${cost} coins, but you only have ${coins()}.`);
     db.run('UPDATE farm SET coins = coins - ?', [cost]);
@@ -266,8 +286,6 @@ function enforce(host: QuillHost, changes: Map<string, TableDiff>): Enforced {
   }
 
   // Remember what kinds of thing the Quill has done, for quests.
-  const q = (stats.quill ??= {});
-  const bump = (k: string, n: number) => n && (q[k] = (q[k] ?? 0) + n);
   bump('fed', fed);
   bump('moved', moved);
   bump('watered', watered);

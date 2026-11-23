@@ -35,7 +35,8 @@ const clamp = (n: number, lo = 0, hi = 10) => Math.max(lo, Math.min(hi, n));
 
 /** "Henbell", "Henbell and Clang", "Henbell, Clang and Peal". */
 export function listNames(names: (string | number)[]): string {
-  const xs = names.map(String);
+  let xs = names.map(String);
+  if (xs.length > 6) xs = [...xs.slice(0, 5), `${xs.length - 5} others`];
   return xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
 }
 

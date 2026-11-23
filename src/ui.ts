@@ -2,7 +2,7 @@ import type { SqlValue } from 'sql.js';
 import { CROPS, GOODS, itemEmoji, itemLabel } from './data/crops';
 import { COMING_SOON, SPECIES } from './data/creatures';
 import { chapterOf, QUESTS } from './data/quests';
-import { fieldName } from './data/schema';
+import { areaOf, fieldName } from './data/schema';
 import { BADGES, type Action, type Game, type QueryOutcome, type Toast } from './game';
 import { isSqlTemplate } from './sqlHelp';
 
@@ -64,7 +64,11 @@ interface PlotRow {
   moisture: number;
   warmth: number;
   tilled: number;
+  field: string;
 }
+
+/** A plot placed on the visible grid (positions relative to the area being shown). */
+type ShownPlot = PlotRow & { gr: number; gc: number };
 
 // ───────────── the UI ─────────────
 
@@ -106,6 +110,8 @@ export function mountUI(root: HTMLElement, game: Game) {
   const $ = (id: string) => root.querySelector<HTMLElement>('#' + id)!;
   const editor = $('sql') as HTMLTextAreaElement;
   let selectedPlot: number | null = null;
+  /** The farm is too big to show at once: one area (the home farm, or one parcel) at a time. */
+  let currentArea = 'Home farm';
   let sideTab: 'schema' | 'bestiary' | 'badges' = 'schema';
   let lastOutcome: QueryOutcome | null = null;
   let reportDraft = '';
@@ -159,7 +165,7 @@ export function mountUI(root: HTMLElement, game: Game) {
       <ul class="night-lines">${n.lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>`;
   }
 
-  function renderFarm(plots: PlotRow[], creatures: CreatureRow[]) {
+  function renderFarm(plots: ShownPlot[], creatures: CreatureRow[], areas: { name: string; plots: number }[], totalPlots: number) {
     const byPlot = new Map<number, CreatureRow[]>();
     for (const c of creatures) byPlot.set(c.plot_id, [...(byPlot.get(c.plot_id) ?? []), c]);
 
@@ -173,7 +179,7 @@ export function mountUI(root: HTMLElement, game: Game) {
           .filter(Boolean)
           .join(' ');
         const label = `Plot ${p.id}${crop ? `, ${crop.label} ${p.growth}%` : ', empty'}${here.length ? `, ${here.map((c) => c.name).join(' and ')}` : ''}`;
-        return `<button class="${cls}" style="grid-row:${p.row};grid-column:${p.col}" data-act="select-plot" data-plot="${p.id}" aria-label="${esc(label)}" aria-pressed="${selectedPlot === p.id}">
+        return `<button class="${cls}" style="grid-row:${p.gr};grid-column:${p.gc}" data-act="select-plot" data-plot="${p.id}" aria-label="${esc(label)}" aria-pressed="${selectedPlot === p.id}">
           <span class="plot-id">${p.id}</span>
           ${ready ? '<span class="sparkle">✨</span>' : ''}
           <span class="plot-crop">${center}</span>
@@ -183,7 +189,7 @@ export function mountUI(root: HTMLElement, game: Game) {
       })
       .join('');
 
-    const cols = Math.max(...plots.map((x) => x.col));
+    const cols = Math.max(...plots.map((x) => x.gc));
     let detail = '<p class="muted small">Click a plot to plant, water or harvest.</p>';
     const p = plots.find((x) => x.id === selectedPlot);
     if (p) {
@@ -214,11 +220,21 @@ export function mountUI(root: HTMLElement, game: Game) {
       </div>`;
     }
 
-    $('farm').innerHTML = `<div class="panel-head"><h2>🌾 Farm</h2></div>
+    const tabs =
+      areas.length > 1
+        ? `<div class="area-tabs" role="tablist" aria-label="Farm areas">${areas
+            .map(
+              (a) =>
+                `<button role="tab" class="tab ${a.name === currentArea ? 'active' : ''}" aria-selected="${a.name === currentArea}" data-act="area" data-area="${esc(a.name)}">${esc(a.name)}</button>`,
+            )
+            .join('')}</div>
+          <p class="muted small area-note">Showing ${plots.length} of ${totalPlots} plots. The Ledger can see them all: try <code>SELECT field, COUNT(crop) FROM plots GROUP BY field;</code></p>`
+        : '';
+    $('farm').innerHTML = `<div class="panel-head"><h2>🌾 Farm</h2>${areas.length > 1 ? `<span class="muted small">${esc(currentArea)}</span>` : ''}</div>${tabs}
       <div class="grid ${cols > 4 ? 'big' : ''}" style="grid-template-columns: repeat(${cols}, 1fr)">${tiles}</div>${detail}`;
   }
 
-  function renderCreatures(creatures: CreatureRow[], plotIds: number[]) {
+  function renderCreatures(creatures: CreatureRow[], plotIds: number[], total: number) {
     const plotOptions = (current: number) =>
       plotIds.map((n) => `<option value="${n}" ${n === current ? 'selected' : ''}>Plot ${n}</option>`).join('');
     const cards = creatures
@@ -237,7 +253,9 @@ export function mountUI(root: HTMLElement, game: Game) {
       </div>`,
       )
       .join('');
-    $('creatures').innerHTML = `<div class="panel-head"><h2>🐾 Creatures</h2><span class="muted small">${creatures.length}</span></div><div class="creature-list ${creatures.length > 6 ? 'scroll' : ''}">${cards}</div>`;
+    $('creatures').innerHTML = `<div class="panel-head"><h2>🐾 Creatures${creatures.length < total ? ` in ${esc(currentArea)}` : ''}</h2><span class="muted small">${
+      creatures.length < total ? `${creatures.length} of ${total}` : total
+    }</span></div><div class="creature-list ${creatures.length > 6 ? 'scroll' : ''}">${cards}</div>`;
   }
 
   function renderBarn() {
@@ -259,15 +277,26 @@ export function mountUI(root: HTMLElement, game: Game) {
           <button class="btn small ghost" data-act="sell-all" data-item="${item}" ${n > 1 ? '' : 'disabled'}>All</button></td></tr>`;
       })
       .join('');
+    // The land office opens in chapter 9. Land is bought by writing an order, so there's no Buy button.
+    const landOpen = game.progress.questIndex >= QUESTS.findIndex((q) => q.id === 'c9-land');
+    const forSale = landOpen ? game.all<{ name: string; price: number; plots: number }>('SELECT name, price, plots FROM land WHERE owned = 0 ORDER BY price') : [];
+    const land = forSale.length
+      ? `<tr><th colspan="3">Land for sale</th></tr>${forSale
+          .map(
+            (l) => `<tr><td>🗺️ ${esc(l.name)} <span class="muted small">${l.plots} plots</span></td><td class="num">${l.price}🪙</td>
+          <td><button class="btn small ghost" data-act="use-sql" data-sql="${esc(`INSERT INTO orders (action, item, quantity) VALUES ('buy', '${l.name}', 1);`)}">Copy order into Ledger</button></td></tr>`,
+          )
+          .join('')}`
+      : '';
     $('barn').innerHTML = `<div class="panel-head"><h2>🛖 Barn</h2></div>
-      <table class="barn"><tbody><tr><th colspan="3">Seeds</th></tr>${seeds}<tr><th colspan="3">Goods</th></tr>${goods}</tbody></table>`;
+      <table class="barn"><tbody><tr><th colspan="3">Seeds</th></tr>${seeds}<tr><th colspan="3">Goods</th></tr>${goods}${land}</tbody></table>`;
   }
 
   function renderQuest() {
     const q = game.currentQuest();
     const el = $('quest');
     if (!q) {
-      el.innerHTML = `<div class="keystone"><div class="avatar" aria-hidden="true">🌾</div><div class="bubble"><p><strong>You did it!</strong> You've finished every chapter written so far. The Hollow is quieter now… but strange footprints lead toward the pond.</p><p><strong>Chapter 9: Subqueries &amp; CTEs</strong> (queries inside queries) is coming soon. Until then the Ledger, and the Quill, are yours. Keep farming and keep asking it questions!</p></div></div>`;
+      el.innerHTML = `<div class="keystone"><div class="avatar" aria-hidden="true">🌾</div><div class="bubble"><p><strong>You did it!</strong> You've finished every chapter written so far. The Hollow is quieter now… but strange footprints lead toward the pond.</p><p><strong>Chapter 10: Window functions</strong> (rankings and running totals across the seasons) is coming soon. Until then the Ledger, and the Quill, are yours. Keep farming and keep asking it questions!</p></div></div>`;
       return;
     }
     const ch = chapterOf(q);
@@ -447,12 +476,30 @@ export function mountUI(root: HTMLElement, game: Game) {
     renderQuillBadge();
     const creatures = game.all<CreatureRow>('SELECT * FROM creatures ORDER BY id');
     const plots = game.all<PlotRow>('SELECT * FROM plots ORDER BY id');
+
+    // Areas in the order they were acquired; show only the current one.
+    const areas: { name: string; plots: number }[] = [];
+    for (const p of plots) {
+      const a = areaOf(p.field);
+      const found = areas.find((x) => x.name === a);
+      if (found) found.plots++;
+      else areas.push({ name: a, plots: 1 });
+    }
+    if (!areas.some((a) => a.name === currentArea)) currentArea = areas[0]?.name ?? 'Home farm';
+    const here = plots.filter((p) => areaOf(p.field) === currentArea);
+    const minRow = Math.min(...here.map((p) => p.row));
+    const minCol = Math.min(...here.map((p) => p.col));
+    const shown: ShownPlot[] = here.map((p) => ({ ...p, gr: p.row - minRow + 1, gc: p.col - minCol + 1 }));
+    const shownIds = new Set(here.map((p) => p.id));
+    if (selectedPlot !== null && !shownIds.has(selectedPlot)) selectedPlot = null;
+
     renderTopbar();
     renderNight();
-    renderFarm(plots, creatures);
+    renderFarm(shown, creatures, areas, plots.length);
     renderCreatures(
-      creatures,
-      plots.map((p) => p.id),
+      creatures.filter((c) => shownIds.has(c.plot_id)),
+      here.map((p) => p.id),
+      creatures.length,
     );
     renderBarn();
     renderQuest();
@@ -530,6 +577,11 @@ export function mountUI(root: HTMLElement, game: Game) {
       case 'tab':
         sideTab = d.tab as typeof sideTab;
         renderSide();
+        break;
+      case 'area':
+        currentArea = d.area ?? 'Home farm';
+        selectedPlot = null;
+        render();
         break;
     }
   });

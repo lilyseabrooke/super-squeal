@@ -10,8 +10,9 @@ import { newGame, solveCurrent } from './helpers';
  * hint queries) and check that the game's response actually helps.
  */
 
-/** Complete queries quoted in hint text (a fragment like `SELECT *` isn't one). */
-const codeSpans = (text: string) => [...text.matchAll(/`([^`]+)`/g)].map((m) => m[1]).filter((c) => /^SELECT\s.+\bFROM\b/i.test(c));
+/** Complete queries quoted in hint text (a fragment like `SELECT *`, or a sketch with "…" in it, isn't one). */
+const codeSpans = (text: string) =>
+  [...text.matchAll(/`([^`]+)`/g)].map((m) => m[1]).filter((c) => /^(SELECT|WITH)\s.+\bFROM\b/i.test(c) && !c.includes('…'));
 
 /** Turns "SELECT ___ FROM ___;" into a regex that matches any way of filling the blanks. */
 function templateRegex(template: string): RegExp {

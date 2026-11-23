@@ -169,3 +169,51 @@ describe('the Big Farm', () => {
     expect(handPerDay, `by hand ${handPerDay.toFixed(1)}/day vs Quill ${quillPerDay.toFixed(1)}/day`).toBeGreaterThan(quillPerDay * 5);
   });
 });
+
+describe('the land office', () => {
+  beforeEach(async () => {
+    g = await newGame();
+    while (g.currentQuest()?.id !== 'c9-buy') solveCurrent(g);
+    g.db.run('UPDATE farm SET coins = 5000');
+  });
+
+  it('an order buys a parcel: 64 new plots in their own field, and its residents', () => {
+    const plots = n('SELECT COUNT(*) FROM plots');
+    const creatures = n('SELECT COUNT(*) FROM creatures');
+    const out = quill(g, "INSERT INTO orders (action, item, quantity) VALUES ('buy', 'Mossy Hollow', 1);");
+    expect(n('SELECT COUNT(*) FROM plots')).toBe(plots + 64);
+    expect(n("SELECT COUNT(*) FROM plots WHERE field = 'Mossy Hollow'")).toBe(64);
+    expect(n('SELECT COUNT(*) FROM creatures')).toBe(creatures + 4);
+    expect(n("SELECT owned FROM land WHERE name = 'Mossy Hollow'")).toBe(1);
+    expect(g.coins).toBe(5000 - 400 + 20); // the purchase also completes the 'Mossy Hollow' quest (+20)
+    expect(n("SELECT total FROM orders WHERE item = 'Mossy Hollow'")).toBe(400);
+    expect(out.write?.effects.join(' ')).toMatch(/Bought Mossy Hollow.*Bramble/);
+    // Residents stand inside their parcel, and the parcel doesn't touch any other land.
+    expect(n("SELECT COUNT(*) FROM creatures c JOIN plots p ON c.plot_id = p.id WHERE c.name IN ('Bramble', 'Hazel', 'Drizzle', 'Tinkle') AND p.field = 'Mossy Hollow'")).toBe(4);
+    expect(n("SELECT COUNT(*) FROM plots a JOIN plots b ON abs(a.row - b.row) + abs(a.col - b.col) = 1 WHERE a.field = 'Mossy Hollow' AND b.field != 'Mossy Hollow'")).toBe(0);
+  });
+
+  it('refuses bad land deals, and a refused batch undoes a purchase in it', () => {
+    refused("UPDATE land SET owned = 1 WHERE name = 'Glasswater'", /office/);
+    refused("INSERT INTO orders (action, item, quantity) VALUES ('buy', 'Mossy Hollow', 2)", /quantity` of 1/);
+    refused("INSERT INTO orders (action, item, quantity) VALUES ('buy', 'Mossy Hollow', 1); UPDATE farm SET coins = 99999;", /coins/);
+    expect(n("SELECT owned FROM land WHERE name = 'Mossy Hollow'")).toBe(0);
+    g.db.run('UPDATE farm SET coins = 100');
+    refused("INSERT INTO orders (action, item, quantity) VALUES ('buy', 'Mossy Hollow', 1)", /costs 400 coins/);
+    g.db.run('UPDATE farm SET coins = 5000');
+    quill(g, "INSERT INTO orders (action, item, quantity) VALUES ('buy', 'Mossy Hollow', 1)");
+    refused("INSERT INTO orders (action, item, quantity) VALUES ('buy', 'Mossy Hollow', 1)", /already own/);
+  });
+
+  it('buying every parcel makes a farm of 432 plots that is still consistent', () => {
+    g.db.run('UPDATE farm SET coins = 100000');
+    quill(g, "INSERT INTO orders (action, item, quantity) SELECT 'buy', name, 1 FROM land WHERE owned = 0;");
+    expect(n('SELECT COUNT(*) FROM land WHERE owned = 0')).toBe(0);
+    expect(n('SELECT COUNT(*) FROM plots')).toBe(48 + 6 * 64);
+    expect(n("SELECT COUNT(DISTINCT row || ',' || col) FROM plots")).toBe(432);
+    expect(n('SELECT COUNT(DISTINCT name) FROM creatures')).toBe(n('SELECT COUNT(*) FROM creatures'));
+    const report = g.endDay();
+    expect(report.lines.join('\n')).not.toMatch(/undefined|NaN/);
+    expect(report.lines.every((l) => l.length < 200)).toBe(true); // long lists are shortened
+  });
+});

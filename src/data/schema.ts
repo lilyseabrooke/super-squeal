@@ -1,5 +1,6 @@
 import type { Database } from 'sql.js';
 import { CROPS, GOODS } from './crops';
+import { SPECIES } from './creatures';
 
 export const PLOT_ROWS = 3;
 export const PLOT_COLS = 4;
@@ -7,7 +8,7 @@ export const STARTING_COINS = 20;
 export const WEATHER_DAYS = 365;
 
 /** Bump this and add a step to migrate() whenever the Ledger's shape changes. */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /** `source` and `amount` may be NULL: the Nullkin (chapter 6) erases them. */
 const FARM_LOG_TABLE = `CREATE TABLE farm_log (
@@ -28,6 +29,65 @@ const ORDERS_TABLE = `CREATE TABLE orders (
   quantity INTEGER NOT NULL,
   total INTEGER
 );`;
+
+/** Land for sale at Mayor Thimble's land office (chapter 9). */
+const LAND_TABLE = `CREATE TABLE land (
+  name TEXT PRIMARY KEY,
+  plots INTEGER NOT NULL,
+  price INTEGER NOT NULL,
+  owned INTEGER NOT NULL
+);`;
+
+export interface Parcel {
+  name: string;
+  price: number;
+  /** Top-left corner on the farm's grid. Parcels are 8×8 and never touch each other. */
+  row: number;
+  col: number;
+  /** Creatures that live there: [name, species, row offset, col offset]. */
+  residents: [string, string, number, number][];
+}
+
+export const PARCEL_SIZE = 8;
+
+export const LAND_PARCELS: Parcel[] = [
+  { name: 'Mossy Hollow', price: 400, row: 1, col: 10, residents: [['Bramble', 'Squeal', 2, 2], ['Hazel', 'Squeal', 5, 5], ['Drizzle', 'Puddlewump', 2, 6], ['Tinkle', 'Henbell', 6, 1]] },
+  { name: 'Lantern Ridge', price: 700, row: 10, col: 1, residents: [['Ember', 'Chimnius', 1, 1], ['Flicker', 'Glimmerwick', 2, 1], ['Chime', 'Henbell', 6, 6], ['Jingle', 'Henbell', 7, 3]] },
+  { name: 'Old Orchard', price: 1000, row: 10, col: 10, residents: [['Acorn', 'Squeal', 3, 3], ['Pebble', 'Sortoise', 6, 6], ['Fleece', 'Echolamb', 1, 6]] },
+  { name: 'Far Meadows', price: 1500, row: 1, col: 19, residents: [['Gong', 'Henbell', 1, 1], ['Peep', 'Henbell', 1, 6], ['Toll', 'Henbell', 6, 1], ['Mudge', 'Squeal', 4, 4]] },
+  { name: 'Thistle Downs', price: 2200, row: 10, col: 19, residents: [['Brook', 'Puddlewump', 3, 3], ['Spark', 'Glimmerwick', 6, 6], ['Root', 'Squeal', 1, 5]] },
+  { name: 'Glasswater', price: 3000, row: 19, col: 1, residents: [['Shelly', 'Sortoise', 1, 1], ['Bellamy', 'Henbell', 6, 2], ['Wallow', 'Squeal', 3, 5], ['Mizzle', 'Puddlewump', 6, 6]] },
+];
+
+function landRowsSql(): string {
+  return LAND_PARCELS.map((p) => `INSERT INTO land VALUES ('${p.name}', ${PARCEL_SIZE * PARCEL_SIZE}, ${p.price}, 0);`).join('\n');
+}
+
+/** Adds a parcel's plots and resident creatures to the farm and marks it owned. */
+export function buyLand(db: Database, name: string, day: number): Parcel {
+  const parcel = LAND_PARCELS.find((p) => p.name === name);
+  if (!parcel) throw new Error(`No parcel called ${name}`);
+  let id = Number(db.exec('SELECT COALESCE(MAX(id), 0) FROM plots')[0].values[0][0]) + 1;
+  const temp = Number(db.exec('SELECT temperature FROM weather WHERE day = ?', [day])[0]?.values[0]?.[0] ?? 10);
+  const idAt = new Map<string, number>();
+  for (let r = 0; r < PARCEL_SIZE; r++) {
+    for (let c = 0; c < PARCEL_SIZE; c++) {
+      idAt.set(`${r},${c}`, id);
+      db.run('INSERT INTO plots VALUES (?, ?, ?, NULL, 0, 2, ?, 0, ?)', [id++, parcel.row + r, parcel.col + c, temp, parcel.name]);
+    }
+  }
+  for (const [who, species, r, c] of parcel.residents) {
+    const sp = SPECIES[species];
+    db.run('INSERT INTO creatures (name, kind, emoji, plot_id, hunger, mood) VALUES (?, ?, ?, ?, 7, 6)', [who, sp.kind, sp.emoji, idAt.get(`${r},${c}`)!]);
+  }
+  db.run('UPDATE land SET owned = 1 WHERE name = ?', [name]);
+  return parcel;
+}
+
+/** What the farm panel shows at once: the original three fields together, then each parcel on its own. */
+export function areaOf(field: string): string {
+  return ['Home field', 'East field', 'South field'].includes(field) ? 'Home farm' : field;
+}
 
 function quote(s: string): string {
   return `'${s.replace(/'/g, "''")}'`;
@@ -75,8 +135,10 @@ CREATE TABLE plots (
   growth INTEGER NOT NULL,
   moisture INTEGER NOT NULL,
   warmth INTEGER NOT NULL,
-  tilled INTEGER NOT NULL
+  tilled INTEGER NOT NULL,
+  field TEXT NOT NULL
 );
+${LAND_TABLE}
 CREATE TABLE inventory (
   item TEXT PRIMARY KEY,
   quantity INTEGER NOT NULL
@@ -105,10 +167,11 @@ INSERT INTO creatures (name, kind, emoji, plot_id, hunger, mood) VALUES ('Squeal
   let id = 1;
   for (let r = 0; r < PLOT_ROWS; r++) {
     for (let c = 0; c < PLOT_COLS; c++) {
-      parts.push(`INSERT INTO plots VALUES (${id++}, ${r + 1}, ${c + 1}, NULL, 0, 2, ${firstTemp}, 0);`);
+      parts.push(`INSERT INTO plots VALUES (${id++}, ${r + 1}, ${c + 1}, NULL, 0, 2, ${firstTemp}, 0, 'Home field');`);
     }
   }
 
+  parts.push(landRowsSql());
   for (const crop of Object.values(CROPS)) {
     parts.push(`INSERT INTO inventory VALUES (${quote(crop.id + '_seed')}, ${crop.id === 'snoutroot' ? 3 : 0});`);
   }
@@ -142,6 +205,14 @@ export function migrate(db: Database): void {
     `);
   }
   if (version < 3) db.run(ORDERS_TABLE);
+  if (version < 4) {
+    db.run(`
+      ALTER TABLE plots ADD COLUMN field TEXT NOT NULL DEFAULT 'Home field';
+      UPDATE plots SET field = CASE WHEN row >= 4 THEN 'South field' WHEN col >= 5 THEN 'East field' ELSE 'Home field' END;
+      ${LAND_TABLE}
+      ${landRowsSql()}
+    `);
+  }
   // New goods are added idempotently so any older save picks them up.
   for (const [item, g] of Object.entries(GOODS)) {
     db.run('INSERT OR IGNORE INTO inventory VALUES (?, 0)', [item]);

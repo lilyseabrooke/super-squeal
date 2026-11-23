@@ -1,5 +1,6 @@
 import type { Chapter, Quest, QuestApi, Stats } from '../types';
 import { SPECIES } from './creatures';
+import { fieldName } from './schema';
 
 export const CHAPTERS: Chapter[] = [
   { n: 1, title: 'Welcome to Bramblewick Hollow', concept: 'SELECT' },
@@ -15,6 +16,8 @@ export const CHAPTERS: Chapter[] = [
   { n: 7.5, title: 'The Big Farm', concept: 'Free play', free: true },
   { n: 8, title: 'Making Connections', concept: 'JOIN' },
   { n: 8.5, title: 'Lantern Night', concept: 'Free play', free: true },
+  { n: 9, title: 'Land and Plenty', concept: 'Subqueries & CTEs' },
+  { n: 9.5, title: 'The Land Rush', concept: 'Free play', free: true },
 ];
 
 function arrive(api: QuestApi, name: string, plot: number, hunger: number, mood: number): string {
@@ -36,6 +39,7 @@ const hungerOf = (api: QuestApi, name: string) => Number(api.scalar('SELECT hung
 
 const where = { pattern: /\bwhere\b/i, message: 'Use `WHERE` to filter the rows for this one.' };
 const join = { pattern: /\bjoin\b/i, message: 'Use `JOIN … ON` to connect the two tables.' };
+const subquery = { pattern: /\(\s*select\b/i, message: 'Put a whole `SELECT` inside brackets: that’s a subquery.' };
 const groupBy = { pattern: /\bgroup\s+by\b/i, message: 'Use `GROUP BY` to make one row per group.' };
 const isNull = { pattern: /\bis\s+(not\s+)?null\b/i, message: 'Use `IS NULL` (or `IS NOT NULL`) to test for missing values.' };
 const distinct = { pattern: /\bdistinct\b/i, message: 'Use `DISTINCT` to remove the repeats.' };
@@ -60,8 +64,8 @@ function expandFarm(api: QuestApi): string {
   let id = 13;
   const add = (row: number, col: number) =>
     api.system(
-      'INSERT INTO plots (id, row, col, crop, growth, moisture, warmth, tilled) VALUES (?, ?, ?, NULL, 0, 2, (SELECT temperature FROM weather WHERE day = ?), 0)',
-      [id++, row, col, api.day],
+      'INSERT INTO plots (id, row, col, crop, growth, moisture, warmth, tilled, field) VALUES (?, ?, ?, NULL, 0, 2, (SELECT temperature FROM weather WHERE day = ?), 0, ?)',
+      [id++, row, col, api.day, fieldName({ row, col })],
     );
   for (let row = 1; row <= 3; row++) for (let col = 5; col <= 8; col++) add(row, col); // East field: 13-24
   for (let row = 4; row <= 6; row++) for (let col = 1; col <= 8; col++) add(row, col); // South field: 25-48
@@ -1473,6 +1477,218 @@ export const QUESTS: Quest[] = [
         'Run `SELECT COUNT(DISTINCT plots.id) FROM plots JOIN creatures ON creatures.plot_id = plots.id WHERE plots.crop IS NOT NULL;`. `COUNT(*)` would count a plot twice if two creatures share it.',
     },
     reward: { coins: 30, xp: 40 },
+  },
+  // ─────────────── Chapter 9: subqueries & CTEs ───────────────
+  {
+    id: 'c9-land',
+    chapter: 9,
+    kind: 'query',
+    title: 'The land office',
+    story:
+      "You've been piling up coins, and Mayor Thimble has noticed. The badger has opened a **land office**, and its deeds are in a new table, `land`. Six parcels of 64 plots each, every one with creatures already living there.\n\nLet's see what's for sale, cheapest first.",
+    task: "Show the `name` and `price` of every parcel you don't own yet (`owned = 0`), cheapest first.",
+    hints: {
+      nudge: 'Filter `land` with `WHERE owned = 0` and sort by `price`.',
+      blank: 'SELECT name, price FROM land WHERE owned = 0 ORDER BY ___;',
+    },
+    expected: 'SELECT name, price FROM land WHERE owned = 0 ORDER BY price',
+    ordered: true,
+    reward: { coins: 10, xp: 20 },
+  },
+  {
+    id: 'c9-buy',
+    chapter: 9,
+    kind: 'action',
+    title: 'Mossy Hollow',
+    story:
+      "**Mossy Hollow** is the cheapest: 400 coins for 64 plots, plus two Squeals, a Puddlewump and a Henbell who already live there. You buy land the same way you buy seeds: an order. Mayor Thimble reads the orders table too.",
+    task: 'Buy **Mossy Hollow** with an `INSERT INTO orders`.',
+    hints: {
+      nudge: "The `item` is the parcel's name, and the `quantity` is 1. (If you're short of coins, sell some goods first.)",
+      blank: "INSERT INTO orders (action, item, quantity) VALUES ('buy', '___', 1);",
+      answer: "Write `INSERT INTO orders (action, item, quantity) VALUES ('buy', 'Mossy Hollow', 1);`",
+    },
+    check: (api) => Number(api.scalar("SELECT owned FROM land WHERE name = 'Mossy Hollow'")) === 1,
+    reward: { coins: 20, xp: 30 },
+  },
+  {
+    id: 'c9-fields',
+    chapter: 9,
+    kind: 'query',
+    title: 'Too big to see',
+    story:
+      "Your farm is now too big to see all at once. The farm panel can only show one area at a time. From here on, the **Ledger** is how you see the whole farm. Every plot now has a `field` column saying which part of the farm it's in.",
+    task: 'Show each `field` next to how many plots it has.',
+    hints: {
+      nudge: 'Group `plots` by `field` and count each group.',
+      blank: 'SELECT field, COUNT(*) FROM plots GROUP BY ___;',
+    },
+    expected: 'SELECT field, COUNT(*) FROM plots GROUP BY field',
+    mustInclude: [groupBy],
+    reward: { coins: 10, xp: 20 },
+  },
+  {
+    id: 'c9-above',
+    chapter: 9,
+    kind: 'query',
+    title: 'Above average',
+    story:
+      "Which plots are doing better than the farm as a whole? To answer that you need *two* questions: \"what's the average growth?\" and \"which plots beat it?\". You can put the first question *inside* the second.",
+    task: "Show the `id`, `field` and `growth` of every plot whose growth is above the farm's average growth.",
+    concept: {
+      title: 'Subqueries',
+      body: 'A **subquery** is a whole `SELECT` in brackets, used inside another query. One that returns a single value can go anywhere a value can, like after `>` in a `WHERE`.',
+      example: 'SELECT item FROM market WHERE sell_price > (SELECT AVG(sell_price) FROM market);',
+    },
+    hints: {
+      nudge: 'Compare `growth` to `(SELECT AVG(growth) FROM plots)`.',
+      blank: 'SELECT id, field, growth FROM plots WHERE growth > (SELECT ___(growth) FROM plots);',
+    },
+    expected: 'SELECT id, field, growth FROM plots WHERE growth > (SELECT AVG(growth) FROM plots)',
+    mustInclude: [subquery],
+    reward: { coins: 20, xp: 30 },
+  },
+  {
+    id: 'c9-in',
+    chapter: 9,
+    kind: 'query',
+    title: 'Standing on nothing',
+    story:
+      "A subquery can also return a whole *list*. Then `IN` checks whether a value is somewhere in that list. It's often a simpler way to connect tables than a `JOIN`.",
+    task: 'Show the `name` of every creature standing on a plot with **no crop**.',
+    concept: {
+      title: 'IN (subquery)',
+      body: '`WHERE x IN (SELECT …)` keeps rows whose `x` appears anywhere in the subquery’s results. The subquery must return just one column.',
+      example: 'SELECT * FROM inventory WHERE item IN (SELECT item FROM market WHERE sell_price > 10);',
+    },
+    hints: {
+      nudge: "Keep creatures whose `plot_id` is `IN` the list of empty plots' ids.",
+      blank: 'SELECT name FROM creatures WHERE plot_id IN (SELECT id FROM plots WHERE crop IS ___);',
+    },
+    expected: 'SELECT name FROM creatures WHERE plot_id IN (SELECT id FROM plots WHERE crop IS NULL)',
+    mustInclude: [subquery, { pattern: /\bin\s*\(/i, message: 'Use `IN (SELECT …)` for this one.' }],
+    reward: { coins: 20, xp: 30 },
+  },
+  {
+    id: 'c9-feed-field',
+    chapter: 9,
+    kind: 'action',
+    title: 'Feeding one field',
+    story:
+      "The Mossy Hollow creatures are starving after the move, but you can't see them from here. No matter: subqueries work in the Quill too. Feed only the creatures standing in Mossy Hollow.",
+    task: "Feed every creature in **Mossy Hollow** with one `UPDATE`, using `IN (SELECT …)` to pick them out.",
+    hints: {
+      nudge: "Feed creatures `WHERE plot_id IN` the ids of plots whose `field` is `'Mossy Hollow'`.",
+      blank: "UPDATE creatures SET hunger = 0 WHERE plot_id IN (SELECT id FROM plots WHERE field = '___');",
+      answer: "Write `UPDATE creatures SET hunger = 0 WHERE plot_id IN (SELECT id FROM plots WHERE field = 'Mossy Hollow');`",
+    },
+    check: (api) =>
+      quillUses(api, 'fed') > 0 &&
+      Number(api.scalar("SELECT MAX(hunger) FROM creatures WHERE plot_id IN (SELECT id FROM plots WHERE field = 'Mossy Hollow')")) <= 2,
+    reward: { coins: 15, xp: 25 },
+  },
+  {
+    id: 'c9-from',
+    chapter: 9,
+    kind: 'query',
+    title: 'A table made of a query',
+    story:
+      "A query's result *is* a table. So you can put a subquery in `FROM` and query its results, like a table that only exists for a moment. Give it a name with `AS`.",
+    task: "First count `farm_log` entries per `source` (call the count `n`). Then find the **average** of those counts.",
+    concept: {
+      title: 'Subqueries in FROM',
+      body: '`SELECT … FROM (SELECT …) AS t` treats the inner query’s results as a table called `t`. Name any computed columns (`COUNT(*) AS n`) so the outer query can use them.',
+      example: 'SELECT MAX(total) FROM (SELECT item, SUM(quantity) AS total FROM orders GROUP BY item) AS t;',
+    },
+    hints: {
+      nudge: 'Inside: `SELECT source, COUNT(*) AS n FROM farm_log GROUP BY source`. Outside: `SELECT AVG(n) FROM ( … ) AS t`.',
+      blank: 'SELECT AVG(n) FROM (SELECT source, COUNT(*) AS n FROM farm_log GROUP BY ___) AS t;',
+    },
+    expected: 'SELECT AVG(n) FROM (SELECT source, COUNT(*) AS n FROM farm_log GROUP BY source) AS t',
+    mustInclude: [subquery],
+    reward: { coins: 20, xp: 30 },
+  },
+  {
+    id: 'c9-cte',
+    chapter: 9,
+    kind: 'query',
+    title: 'The field report',
+    story:
+      "Subqueries inside subqueries get hard to read fast. A **CTE** lets you write the inner query *first*, give it a name, and then use it like a table. Perfect for a field report.\n\nBonus trick: `COUNT(crop)` counts only rows where `crop` isn't NULL, which is just the planted plots.",
+    task: 'Using `WITH`, make a table `f` of each `field` with its `total` plots and `planted` plots. Then show the fields where **less than half** the plots are planted.',
+    concept: {
+      title: 'WITH (Common Table Expressions)',
+      body: '`WITH name AS (SELECT …) SELECT … FROM name` defines a named, temporary result you can query below it, as many times as you like. It reads top to bottom, like a recipe.',
+      example: 'WITH pricey AS (SELECT * FROM market WHERE sell_price >= 10) SELECT item FROM pricey;',
+    },
+    hints: {
+      nudge: 'In the CTE: `SELECT field, COUNT(*) AS total, COUNT(crop) AS planted FROM plots GROUP BY field`. Then keep rows where `planted * 2 < total`.',
+      blank:
+        'WITH f AS (SELECT field, COUNT(*) AS total, COUNT(crop) AS planted FROM plots GROUP BY field) SELECT field, planted, total FROM f WHERE planted * 2 < ___;',
+    },
+    expected:
+      'WITH f AS (SELECT field, COUNT(*) AS total, COUNT(crop) AS planted FROM plots GROUP BY field) SELECT field, planted, total FROM f WHERE planted * 2 < total',
+    mustInclude: [{ pattern: /^\s*with\b/i, message: 'Start with `WITH f AS ( … )` for this one.' }],
+    reward: { coins: 25, xp: 40 },
+  },
+
+  // ─────────────────── Free play: The Land Rush ───────────────────
+  {
+    id: 'f6-rush',
+    chapter: 9.5,
+    kind: 'goal',
+    title: 'The Land Rush',
+    story:
+      "Word has spread that Mayor Thimble is selling land, and farmers from three valleys are eyeing the deeds. Buy what you can before they do!\n\n" +
+      freePlay +
+      "\n\nYou won't be able to *see* most of your farm, so let the Ledger be your eyes. A few good queries each morning will tell you where the hungry creatures, dry plots and ripe crops are.",
+    task: 'Grow the farm.',
+    goals: [
+      { label: 'Own all 6 parcels of land', progress: (api) => ({ have: Number(api.scalar('SELECT COUNT(*) FROM land WHERE owned = 1')), need: 6 }) },
+      { label: 'Have 300 plots growing crops at once', progress: (api) => ({ have: plantedNow(api), need: 300 }) },
+      { label: 'Earn 5000 coins from selling', progress: (api) => ({ have: since(api, (s) => s.earned), need: 5000 }) },
+      { label: 'Every creature in a good mood (6+) at the same time', progress: (api) => ({ have: lowestMood(api), need: 6 }) },
+    ],
+    hints: {
+      nudge: 'Each morning, ask the Ledger: who is hungry, which plots are dry, and what is ripe? Then fix it all with a few writes.',
+      blank: 'A field-by-field picture: `SELECT field, COUNT(crop) AS planted, SUM(growth >= 100) AS ripe, SUM(crop IS NOT NULL AND moisture = 0) AS dry FROM plots GROUP BY field;`',
+      answer:
+        "Morning routine: `UPDATE creatures SET hunger = 0;` `UPDATE plots SET crop = NULL WHERE growth >= 100;` sell what you harvested, buy seeds and plant with `UPDATE plots SET crop = 'sunpuff', growth = 0 WHERE id IN (SELECT id FROM plots WHERE crop IS NULL LIMIT 40);` and buy the next parcel as soon as you can afford it.",
+    },
+    reward: { coins: 100, xp: 100 },
+  },
+  {
+    id: 'f6-fullest',
+    chapter: 9.5,
+    kind: 'report',
+    title: 'The land surveyor',
+    story: "A land surveyor (a hare with a very long measuring tape) is mapping the valley's farms.",
+    task: 'Answer the surveyor.',
+    question: 'Which `field` has the most plots planted right now? (Type the field name.)',
+    expected:
+      'WITH f AS (SELECT field, COUNT(crop) AS planted FROM plots GROUP BY field) SELECT field FROM f WHERE planted = (SELECT MAX(planted) FROM f)',
+    hints: {
+      nudge: 'Count planted plots per field (`COUNT(crop)`), then find the biggest.',
+      blank: 'SELECT field, COUNT(crop) FROM plots GROUP BY field ORDER BY COUNT(crop) ___ LIMIT 1;',
+      answer: 'Run `SELECT field, COUNT(crop) FROM plots GROUP BY field ORDER BY COUNT(crop) DESC LIMIT 1;`',
+    },
+    reward: { coins: 25, xp: 40 },
+  },
+  {
+    id: 'f6-idle',
+    chapter: 9.5,
+    kind: 'report',
+    title: 'Idle hooves',
+    story: '"And how many of your creatures are just standing about on bare earth?" the hare asks, peering at the far fields you can’t see.',
+    task: 'Answer the surveyor.',
+    question: 'How many creatures are standing on plots with **no crop** right now?',
+    expected: 'SELECT COUNT(*) FROM creatures WHERE plot_id IN (SELECT id FROM plots WHERE crop IS NULL)',
+    hints: {
+      nudge: 'Count creatures whose `plot_id` is `IN` the list of empty plots.',
+      blank: 'SELECT COUNT(*) FROM creatures WHERE plot_id IN (SELECT id FROM plots WHERE crop IS ___);',
+      answer: 'Run `SELECT COUNT(*) FROM creatures WHERE plot_id IN (SELECT id FROM plots WHERE crop IS NULL);`',
+    },
+    reward: { coins: 25, xp: 40 },
   },
 ];
 

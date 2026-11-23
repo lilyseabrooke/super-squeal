@@ -55,6 +55,8 @@ export const SOLVERS: Record<string, (g: Game) => void> = {
     }
     quill(g, 'UPDATE plots SET crop = NULL WHERE growth >= 100;');
   },
+  'c9-buy': (g) => quill(g, "INSERT INTO orders (action, item, quantity) VALUES ('buy', 'Mossy Hollow', 1);"),
+  'c9-feed-field': (g) => quill(g, "UPDATE creatures SET hunger = 0 WHERE plot_id IN (SELECT id FROM plots WHERE field = 'Mossy Hollow');"),
   'c8-glimmer': (g) => {
     quill(g, "UPDATE plots SET crop = 'sunpuff', growth = 0 WHERE id IN (SELECT id FROM plots WHERE crop IS NULL LIMIT 4);");
     g.endDay();
@@ -114,7 +116,9 @@ export function solveCurrent(g: Game): number {
   if (q.kind === 'query') g.runPlayerQuery(q.expected);
   else if (q.kind === 'answer') g.answer(q.correct);
   else if (q.kind === 'report') solveReport(g);
-  else if (q.kind === 'goal') {
+  else if (q.id === 'f6-rush') {
+    for (let i = 0; i < 60 && g.currentQuest()?.id === q.id; i++) landRushDay(g);
+  } else if (q.kind === 'goal') {
     for (let i = 0; i < 60 && g.currentQuest()?.id === q.id; i++) farmDay(g);
   } else SOLVERS[q.id](g);
   return g.day - start;
@@ -146,4 +150,15 @@ export function quillFarmDay(g: Game): number {
   }
   g.endDay();
   return writes;
+}
+
+/** The Land Rush, played entirely through the Ledger: buy the next parcel when affordable, then the Quill routine. */
+export function landRushDay(g: Game): number {
+  let writes = 0;
+  const next = g.all<{ name: string; price: number }>('SELECT name, price FROM land WHERE owned = 0 ORDER BY price LIMIT 1')[0];
+  if (next && g.coins >= next.price + 100) {
+    quill(g, `INSERT INTO orders (action, item, quantity) VALUES ('buy', '${next.name}', 1);`);
+    writes++;
+  }
+  return writes + quillFarmDay(g);
 }

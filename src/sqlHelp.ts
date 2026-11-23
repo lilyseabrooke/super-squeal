@@ -14,8 +14,14 @@ export function stripComments(sql: string): string {
 
 /** Tables a query reads from (FROM / JOIN targets), lowercased. */
 export function tablesIn(sql: string): string[] {
+  const clean = stripLiterals(sql);
+  // Names defined by WITH (CTEs) are temporary, not tables in the Ledger.
+  const ctes = new Set([...clean.matchAll(/(?:\bwith|,)\s*(\w+)\s+as\s*\(/gi)].map((m) => m[1].toLowerCase()));
   const found = new Set<string>();
-  for (const m of stripLiterals(sql).matchAll(/\b(?:from|join)\s+["`[]?(\w+)/gi)) found.add(m[1].toLowerCase());
+  for (const m of clean.matchAll(/\b(?:from|join)\s+["`[]?(\w+)/gi)) {
+    const t = m[1].toLowerCase();
+    if (!ctes.has(t)) found.add(t);
+  }
   return [...found];
 }
 

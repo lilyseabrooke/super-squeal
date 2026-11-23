@@ -58,3 +58,13 @@ describe('friendlyError', () => {
     expect(friendlyError('near "FORM": syntax error', schema)).toMatch(/FROM/);
   });
 });
+
+describe('tablesIn', () => {
+  it('finds real tables but not CTE names or subqueries', async () => {
+    const { tablesIn } = await import('../src/sqlHelp');
+    expect(tablesIn('SELECT * FROM plots p JOIN creatures c ON c.plot_id = p.id')).toEqual(['plots', 'creatures']);
+    expect(tablesIn('WITH f AS (SELECT field FROM plots), g AS (SELECT * FROM f) SELECT * FROM g')).toEqual(['plots']);
+    expect(tablesIn('SELECT AVG(n) FROM (SELECT COUNT(*) AS n FROM farm_log GROUP BY source)')).toEqual(['farm_log']);
+    expect(tablesIn("SELECT * FROM land WHERE name = 'from x'")).toEqual(['land']);
+  });
+});
