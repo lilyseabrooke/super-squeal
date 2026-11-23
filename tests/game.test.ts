@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { memoryKV, type Action } from '../src/game';
+import { Game, memoryKV, type Action } from '../src/game';
 import { QUESTS } from '../src/data/quests';
-import { plotDistance } from '../src/data/schema';
+import { SCHEMA_VERSION } from '../src/data/schema';
 import { newGame, solveCurrent, sql } from './helpers';
 
 
@@ -48,11 +48,13 @@ describe('full playthrough', () => {
       'c6-nullkin': 'SELECT COUNT(*) FROM farm_log WHERE source IS NULL',
       'c6-echolamb':
         'SELECT COUNT(*) FROM (SELECT day, source, plot_id, event FROM farm_log GROUP BY day, source, plot_id, event HAVING COUNT(*) > 1)',
+      'c7-laws': 'SELECT COUNT(*) FROM farm WHERE coins < 9999',
     };
     while (g.currentQuest()) {
       const q = g.currentQuest()!;
       if (q.kind === 'query') g.runPlayerQuery(q.expected);
       else if (q.kind === 'answer') {
+        expect(evidence[q.id], `add evidence for answer quest ${q.id}`).toBeDefined();
         expect(Number(g.scalar(evidence[q.id])), `evidence for ${q.id}`).toBeGreaterThan(0);
         g.answer(q.correct);
       } else solveCurrent(g);
@@ -61,6 +63,20 @@ describe('full playthrough', () => {
 });
 
 describe('game mechanics', () => {
+  it('debounced saving batches writes but loses nothing', async () => {
+    const kv = memoryKV();
+    let writes = 0;
+    const counting = { ...kv, set: (k: string, v: string) => (writes++, kv.set(k, v)) };
+    const g = new Game(await sql(), counting, () => '2026-11-23', 'debounced');
+    g.flush();
+    writes = 0;
+    for (let i = 0; i < 5; i++) g.act({ type: 'water', plot: i + 1 });
+    expect(writes).toBe(0);
+    g.flush();
+    expect(writes).toBe(1);
+    expect((await newGame(kv)).scalar('SELECT MIN(moisture) FROM plots WHERE id <= 5')).toBe(3);
+  });
+
   it('blocks writes before the Ledger Quill', async () => {
     const g = await newGame();
     const out = g.runPlayerQuery('UPDATE farm SET coins = 9999');
@@ -87,7 +103,7 @@ describe('game mechanics', () => {
     g.endDay();
     const alive = g.all<{ id: number }>('SELECT id FROM plots WHERE crop IS NOT NULL ORDER BY id').map((p) => p.id);
     expect(alive).toEqual([1, 2, 3, 6]);
-    for (const id of alive) expect(plotDistance(id, 2)).toBeLessThanOrEqual(1);
+    for (const id of alive) expect(g.plotDistance(id, 2)).toBeLessThanOrEqual(1);
   });
 
   it('crops grow, and tilled soil grows faster', async () => {
@@ -122,6 +138,7 @@ describe('game mechanics', () => {
     const g = await newGame(kv);
     g.act({ type: 'feed', name: 'Squeal' });
     g.endDay();
+    g.flush();
     const g2 = await newGame(kv);
     expect(g2.day).toBe(2);
     expect(g2.progress.questIndex).toBe(g.progress.questIndex);
@@ -131,8 +148,10 @@ describe('game mechanics', () => {
     const kv = memoryKV();
     const g1 = await newGame(kv, '2026-11-23');
     expect(g1.progress.streak.count).toBe(1);
+    g1.flush();
     const g2 = await newGame(kv, '2026-11-24');
     expect(g2.progress.streak.count).toBe(2);
+    g2.flush();
     const g3 = await newGame(kv, '2026-11-27');
     expect(g3.progress.streak.count).toBe(1);
   });
@@ -191,22 +210,37 @@ describe('old saves', () => {
         CREATE TABLE old_log (id INTEGER PRIMARY KEY, day INTEGER NOT NULL, source TEXT NOT NULL, plot_id INTEGER NOT NULL, event TEXT NOT NULL, amount INTEGER NOT NULL);
         INSERT INTO old_log SELECT * FROM farm_log; DROP TABLE farm_log; ALTER TABLE old_log RENAME TO farm_log;
         DELETE FROM inventory WHERE item = 'echo_wool'; DELETE FROM market WHERE item = 'echo_wool';
+        DROP TABLE orders;
         PRAGMA user_version = 0;`);
     };
     toV1(g1.db);
     const snap = new (await sql()).Database(g1.snapshot);
     toV1(snap);
     g1.snapshot = snap.export();
-    g1.save();
+    g1.flush();
     const rowsBefore = Number(g1.scalar('SELECT COUNT(*) FROM farm_log'));
 
     const g2 = await newGame(kv);
-    expect(Number(g2.scalar('PRAGMA user_version'))).toBe(2);
+    expect(Number(g2.scalar('PRAGMA user_version'))).toBe(SCHEMA_VERSION);
     expect(Number(g2.scalar('SELECT COUNT(*) FROM farm_log'))).toBe(rowsBefore);
+    expect(Number(g2.scalar('SELECT COUNT(*) FROM orders'))).toBe(0);
     expect(Number(g2.scalar("SELECT COUNT(*) FROM inventory WHERE item = 'echo_wool'"))).toBe(1);
     g2.db.run("INSERT INTO farm_log (day, source, plot_id, event, amount) VALUES (1, NULL, 1, 'nibbled', NULL)");
     g2.rewind(); // the snapshot was upgraded too
-    expect(Number(g2.scalar('PRAGMA user_version'))).toBe(2);
+    expect(Number(g2.scalar('PRAGMA user_version'))).toBe(SCHEMA_VERSION);
+    expect(Number(g2.scalar('SELECT COUNT(*) FROM orders'))).toBe(0);
     expect(g2.progress.stats.earned).toBe(0);
+  });
+});
+
+describe('night report', () => {
+  it('groups a big farm into one line per kind of event', async () => {
+    const g = await newGame();
+    while (g.currentQuest()?.id !== 'c7-quill') solveCurrent(g);
+    g.runPlayerQuery('UPDATE creatures SET hunger = 0;');
+    const lines = g.endDay().lines;
+    expect(lines.filter((l) => l.startsWith('🥚'))).toHaveLength(1);
+    expect(lines.find((l) => l.startsWith('🥚'))).toMatch(/^🥚 4 eggs laid \(Henbell, Clang, Dingle and Peal\)\.$/);
+    expect(lines.filter((l) => l.startsWith('🐷'))).toHaveLength(1);
   });
 });

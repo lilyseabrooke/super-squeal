@@ -1,9 +1,10 @@
 import type { Database, SqlJsStatic, SqlValue } from 'sql.js';
 import { CROPS, GOODS, itemLabel } from './data/crops';
-import { ALL_TRAIT_IDS, SPECIES } from './data/creatures';
+import { ALL_TRAIT_IDS, SPECIES, speciesOf } from './data/creatures';
 import { QUESTS } from './data/quests';
-import { migrate, schemaSql } from './data/schema';
+import { migrate, plotDistance, schemaSql } from './data/schema';
 import { runNight } from './sim';
+import { LawError, quillWrite } from './quill';
 import {
   BLANK,
   BLANKS_MESSAGE,
@@ -78,6 +79,8 @@ export interface QueryOutcome {
   error?: string;
   rawError?: string;
   feedback?: { ok: boolean; message: string };
+  /** Set when the Ledger Quill changed the farm. */
+  write?: { changed: number; effects: string[] };
 }
 
 export const LEVELS = [
@@ -87,7 +90,8 @@ export const LEVELS = [
   { xp: 300, title: 'Query Swine' },
   { xp: 500, title: 'Truffle Hunter' },
   { xp: 750, title: 'Grand Grunter' },
-  { xp: 1050, title: 'Hollow Legend 👑' },
+  { xp: 1050, title: 'Hollow Legend' },
+  { xp: 1400, title: 'Ledger Mythic 👑' },
 ];
 
 export const BADGES: { id: string; emoji: string; name: string; desc: string }[] = [
@@ -100,12 +104,14 @@ export const BADGES: { id: string; emoji: string; name: string; desc: string }[]
   { id: 'water_wise', emoji: '💧', name: 'Water Wise', desc: 'Kept the farm thriving through the dry spell.' },
   { id: 'ghost_hunter', emoji: '👻', name: 'Ghost Hunter', desc: 'Caught the Nullkin with IS NULL.' },
   { id: 'ledger_keeper', emoji: '📚', name: 'Ledger Keeper', desc: 'Passed the Ledger Audit.' },
+  { id: 'quill_bearer', emoji: '🪶', name: 'Quill Bearer', desc: 'Changed the farm by writing SQL.' },
+  { id: 'big_farmer', emoji: '🚜', name: 'Big Farmer', desc: 'Ran all 48 plots of the Big Farm.' },
 ];
 
 const HINT_COSTS = [0, 0, 2, 5];
 
 export function emptyStats(): Stats {
-  return { queries: 0, harvested: 0, sold: 0, fed: 0, earned: 0, harvestedBy: {}, soldBy: {} };
+  return { queries: 0, harvested: 0, sold: 0, fed: 0, earned: 0, harvestedBy: {}, soldBy: {}, writes: 0, quill: {} };
 }
 
 function defaultProgress(): Progress {
@@ -159,6 +165,11 @@ export class Game implements QuestApi {
     private SQL: SqlJsStatic,
     private kv: KV = browserKV,
     private today: () => string = () => localDate(),
+    /**
+     * 'debounced' (the browser): write at most every 400ms, plus flush() when the page hides.
+     * 'immediate': write on every change. 'manual': only on flush() (fast tests).
+     */
+    private saveMode: 'debounced' | 'immediate' | 'manual' = 'debounced',
   ) {
     if (!this.load()) this.fresh();
     this.touchStreak();
@@ -198,7 +209,20 @@ export class Game implements QuestApi {
     }
   }
 
+  private saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Marks the game as changed. How soon it reaches storage depends on the save mode. */
   save() {
+    if (this.saveMode === 'immediate') this.flush();
+    else if (this.saveMode === 'debounced' && !this.saveTimer) {
+      this.saveTimer = setTimeout(() => this.flush(), 400);
+    }
+  }
+
+  /** Writes the game to storage now. */
+  flush() {
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = null;
     this.kv.set(
       SAVE_KEY,
       JSON.stringify({ db: toB64(this.db.export()), snapshot: toB64(this.snapshot), progress: this.progress, lastNight: this.lastNight }),
@@ -282,6 +306,10 @@ export class Game implements QuestApi {
   system(sql: string, params: SqlValue[] = []) {
     this.db.run(sql, params);
     this.progress.replayToday.push({ sql, params });
+  }
+
+  plotDistance(a: number, b: number): number {
+    return plotDistance(this.db, a, b);
   }
 
   meet(name: string) {
@@ -401,6 +429,8 @@ export class Game implements QuestApi {
     if (done('f2-dry')) award('water_wise');
     if (done('c6-isnull')) award('ghost_hunter');
     if (done('f3-nibbled')) award('ledger_keeper');
+    if (this.progress.stats.writes > 0) award('quill_bearer');
+    if (done('f4-big')) award('big_farmer');
   }
 
   get bestiaryProgress(): { found: number; total: number } {
@@ -411,8 +441,10 @@ export class Game implements QuestApi {
 
   runPlayerQuery(sql: string): QueryOutcome {
     if (!stripComments(sql).trim()) return { error: 'Type a query into the Ledger first!' };
-    if (!this.progress.quill && !isReadOnly(sql)) return { error: READONLY_MESSAGE };
+    const readOnly = isReadOnly(sql);
+    if (!this.progress.quill && !readOnly) return { error: READONLY_MESSAGE };
     if (sql.includes(BLANK)) return { error: BLANKS_MESSAGE };
+    if (!readOnly) return this.runQuillWrite(sql);
 
     let result: ResultSet;
     try {
@@ -479,6 +511,21 @@ export class Game implements QuestApi {
     return false;
   }
 
+  /** A write with the Ledger Quill: checked against the Ledger's laws, all-or-nothing. */
+  private runQuillWrite(sql: string): QueryOutcome {
+    let out;
+    try {
+      out = quillWrite(this, sql);
+    } catch (e) {
+      if (e instanceof LawError) return { error: `📜 The Ledger refuses, and nothing was changed. ${e.message}` };
+      const raw = e instanceof Error ? e.message : String(e);
+      return { error: friendlyError(raw, this.schemaInfo()), rawError: raw };
+    }
+    this.progress.stats.queries++;
+    this.afterChange();
+    return { result: out.result ?? undefined, write: { changed: out.changed, effects: out.effects } };
+  }
+
   answer(choice: number): boolean {
     const q = this.currentQuest();
     if (!q || q.kind !== 'answer') return false;
@@ -519,7 +566,7 @@ export class Game implements QuestApi {
   private planAction(a: Action): { sql: string[]; label: string; after?: () => void } | string {
     switch (a.type) {
       case 'feed': {
-        const sp = SPECIES[a.name];
+        const sp = speciesOf({ kind: this.scalar('SELECT kind FROM creatures WHERE name = ?', [a.name]) as string, name: a.name });
         return {
           label: `${sp?.emoji ?? ''} ${a.name} gobbles up some ${sp?.food ?? 'food'}.`,
           sql: [`UPDATE creatures SET hunger = 0 WHERE name = ${sqlStr(a.name)};`],
@@ -583,6 +630,7 @@ export class Game implements QuestApi {
             `UPDATE farm SET coins = coins - ${crop.seedPrice};`,
             `UPDATE inventory SET quantity = quantity + 1 WHERE item = ${sqlStr(crop.id + '_seed')};`,
           ],
+          after: () => this.recordOrder('buy', crop.id + '_seed', 1, crop.seedPrice),
         };
       }
       case 'sell': {
@@ -604,10 +652,16 @@ export class Game implements QuestApi {
             this.progress.stats.sold += n;
             this.progress.stats.earned += n * price;
             this.progress.stats.soldBy[a.item] = (this.progress.stats.soldBy[a.item] ?? 0) + n;
+            this.recordOrder('sell', a.item, n, n * price);
           },
         };
       }
     }
+  }
+
+  /** Barn-button trades are written to `orders` too, so the table tells the whole story. */
+  private recordOrder(action: 'buy' | 'sell', item: string, quantity: number, total: number) {
+    this.db.run('INSERT INTO orders (day, action, item, quantity, total) VALUES (?, ?, ?, ?, ?)', [this.day, action, item, quantity, total]);
   }
 
   act(a: Action): boolean {

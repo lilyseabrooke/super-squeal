@@ -10,7 +10,8 @@ import { newGame, solveCurrent } from './helpers';
  * hint queries) and check that the game's response actually helps.
  */
 
-const codeSpans = (text: string) => [...text.matchAll(/`([^`]+)`/g)].map((m) => m[1]).filter((c) => /^SELECT\s/i.test(c));
+/** Complete queries quoted in hint text (a fragment like `SELECT *` isn't one). */
+const codeSpans = (text: string) => [...text.matchAll(/`([^`]+)`/g)].map((m) => m[1]).filter((c) => /^SELECT\s.+\bFROM\b/i.test(c));
 
 /** Turns "SELECT ___ FROM ___;" into a regex that matches any way of filling the blanks. */
 function templateRegex(template: string): RegExp {
@@ -64,10 +65,13 @@ describe('what a beginner sees', () => {
 
   it('only real SQL is treated as a template', () => {
     for (const q of QUESTS) {
-      if (q.kind === 'action') expect(isSqlTemplate(q.hints.blank), `${q.id}: "${q.hints.blank}"`).toBe(false);
+      // Action quests are done with buttons, except Quill quests, whose templates are writes.
+      if (q.kind === 'action' && isSqlTemplate(q.hints.blank)) expect(q.hints.blank, q.id).toMatch(/^(INSERT|UPDATE|DELETE)\s/);
     }
     expect(isSqlTemplate('With a plot selected, press Plant')).toBe(false);
     expect(isSqlTemplate('SELECT * FROM ___;')).toBe(true);
+    expect(isSqlTemplate('UPDATE creatures SET hunger = ___;')).toBe(true);
+    expect(isSqlTemplate('Update the plots please')).toBe(false);
   });
 
   it('every SQL snippet shown in hints and answer explanations runs without errors', async () => {

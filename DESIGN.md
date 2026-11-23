@@ -98,9 +98,41 @@ Each creature's entry starts mostly as `???`. Fields are filled in by:
 | 🌻 | Free play | **The Dry Spell** — a week without rain; answer the Water Board. |
 | 6 | `NULL`, `IS NULL`, `DISTINCT`, `COUNT(DISTINCT …)` | Haunted logs: Nullkin and Echolamb. |
 | 🌻 | Free play | **The Ledger Audit** — impress a stern heron auditor. |
-| 7 | `INSERT`, `UPDATE`, `DELETE` | The Ledger Quill: command the farm directly. |
+| 7 | `UPDATE`, `INSERT`, `DELETE` | The farm grows to 48 plots and 14 creatures; the Ledger Quill makes running it bearable. |
+| 🌻 | Free play | **The Big Farm** — 30 plots growing at once, 40 harvests, 300 coins. |
 | 8 | `JOIN` | Connect the Bestiary to the logs; trade with neighbours. |
 | 9+ | Subqueries, CTEs, window functions | Seasonal trends, Mossgrandle's sleep cycle. |
+
+## The Ledger Quill (chapter 7)
+
+Chapter 7 first makes manual farming a chore, then hands over the tool that fixes
+it. Mayor Thimble grants the **East field** (plots 13–24) and **South field**
+(25–48), and seven creatures arrive with them (three Henbells, two Squeals, a
+Puddlewump and a Sortoise). The first quest has you feed all fourteen by hand;
+the night passes; they're hungry again; *then* you get the Quill and do it with
+`UPDATE creatures SET hunger = 0;`. Measured with the test bots, running the Big
+Farm takes about 61 button presses a day by hand versus about 5 Quill writes.
+
+With the Quill, typed SQL can change the farm, but only within **the Ledger's
+laws** (`src/quill.ts`). A write runs inside a savepoint; the farm is compared
+before and after; any broken law rolls back the *whole* write, and Keystone
+explains which law it broke.
+
+| Table | Allowed | Refused (examples) |
+|---|---|---|
+| `creatures` | lower `hunger` (feed), change `plot_id` (move) | raising hunger, changing mood, adding or deleting creatures |
+| `plots` | raise `moisture` up to 3 (water); `crop` NULL→crop with `growth = 0` (plant, uses a seed); crop→NULL (harvest if ripe, otherwise uproot) | writing `growth`, `tilled`, `warmth`; swapping one crop for another |
+| `orders` | `INSERT` buy (`'sunpuff_seed'`) and sell orders, filled immediately | editing or deleting past orders, buying what you can't afford, selling what you don't have |
+| `farm_log` | `DELETE` (tidy up) | inserting or updating (forging history) |
+| `farm`, `inventory`, `market`, `seeds`, `weather` | nothing directly | writing coins, items, prices or weather |
+
+Side effects are applied in a fixed order (buys → plantings → harvests → sells), so
+one write can buy seeds and plant them, or harvest and sell. Structural SQL
+(`CREATE`, `DROP`, `PRAGMA`, transactions…) is always refused. ⏪ Rewind undoes
+a regretted `DELETE`.
+
+The Barn buttons also record their trades in `orders`, so the table tells the
+whole story.
 
 ## Free play
 
@@ -136,7 +168,7 @@ far. There is no prescribed query and no failure state.
 
 ## Gamification
 
-- **XP and levels**: Piglet → Hog → Boss Hog → Query Swine → Truffle Hunter → Grand Grunter → Hollow Legend 👑
+- **XP and levels**: Piglet → Hog → Boss Hog → Query Swine → Truffle Hunter → Grand Grunter → Hollow Legend → Ledger Mythic 👑
 - **Coins** from selling harvests, eggs and pebbles, plus quest rewards.
 - **Bestiary completion** as the long-term collection goal.
 - **Badges**: Hello, Ledger · Green Trotters · Critter-ologist · Frost Detective · Hollow Hand · Fair Favourite · Water Wise · Ghost Hunter · Ledger Keeper
@@ -154,6 +186,7 @@ far. There is no prescribed query and no failure state.
 | `seeds` | `crop`, `price`, `nights_to_grow` |
 | `weather` | `day`, `temperature`, `sky` |
 | `farm_log` | `id`, `day`, `source`, `plot_id`, `event`, `amount` |
+| `orders` | `id`, `day`, `action` (`buy`/`sell`), `item`, `quantity`, `total` |
 
 Creature traits and quest answers live in game code, *not* in the database, so
 they can't be looked up — only deduced.
@@ -164,7 +197,13 @@ leaving `NULL` sources and amounts in `farm_log`.
 
 The database has a schema version (`PRAGMA user_version`). `migrate()` in
 `src/data/schema.ts` upgrades older saves on load (v1 → v2 relaxed `farm_log`'s
-`NOT NULL` columns and added Echo wool), so players never lose progress.
+`NOT NULL` columns and added Echo wool; v2 → v3 added `orders`), so players
+never lose progress.
+
+Plot positions come from each plot's `row` and `col` (not its id), so the farm
+can grow. Creatures are matched to their species by `kind`, so there can be
+several of one species. Saves are batched (at most every 400 ms, and flushed
+when the tab is hidden) so a big farm stays fast.
 
 ## Night simulation rules (MVP)
 
@@ -201,8 +240,8 @@ The database has a schema version (`PRAGMA user_version`). `migrate()` in
 
 ## Current scope
 
-- Chapters 1–6 plus three free-play interludes: 53 quests, 7 creatures.
-- Chapter 7 (the Ledger Quill: `INSERT` / `UPDATE` / `DELETE`) is next.
+- Chapters 1–7 plus four free-play interludes: 66 quests, 7 species (14 creatures on the Big Farm).
+- Chapter 8 (`JOIN`) is next.
 
 ## Original MVP scope
 

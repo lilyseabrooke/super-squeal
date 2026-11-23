@@ -1,12 +1,13 @@
 import type { Database, SqlValue } from 'sql.js';
 import { CROPS } from './data/crops';
-import { SPECIES } from './data/creatures';
-import { plotDistance } from './data/schema';
+import { speciesOf } from './data/creatures';
+import { gridDistance, plotPositions } from './data/schema';
 import type { NightReport } from './types';
 
 interface CreatureRow {
   id: number;
   name: string;
+  kind: string;
   plot_id: number;
   hunger: number;
   mood: number;
@@ -32,6 +33,12 @@ function all<T>(db: Database, sql: string, params: SqlValue[] = []): T[] {
 
 const clamp = (n: number, lo = 0, hi = 10) => Math.max(lo, Math.min(hi, n));
 
+/** "Henbell", "Henbell and Clang", "Henbell, Clang and Peal". */
+export function listNames(names: (string | number)[]): string {
+  const xs = names.map(String);
+  return xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
+}
+
 /**
  * Runs one night on the farm: creatures act, weather hits, crops grow,
  * and the day counter advances. Everything that happens is written to farm_log.
@@ -42,42 +49,54 @@ export function runNight(db: Database): NightReport {
     temperature: 10,
     sky: 'cloudy',
   };
-  const creatures = all<CreatureRow>(db, 'SELECT id, name, plot_id, hunger, mood FROM creatures');
+  const creatures = all<CreatureRow>(db, 'SELECT id, name, kind, plot_id, hunger, mood FROM creatures');
+  const pos = plotPositions(db);
+  const plotDistance = (a: number, b: number) => {
+    const pa = pos.get(a);
+    const pb = pos.get(b);
+    return pa && pb ? gridDistance(pa, pb) : Infinity;
+  };
+  const species = (c: CreatureRow) => speciesOf(c)?.name;
   const plots = all<PlotRow>(db, 'SELECT id, crop, growth, moisture, warmth, tilled FROM plots');
   const lines: string[] = [];
+  // Who did what tonight, so a big farm gets one line per kind of event, not one per creature.
+  const did = new Map<string, string[]>();
+  const note = (what: string, who: string | number) => did.set(what, [...(did.get(what) ?? []), String(who)]);
+  const who = (what: string) => did.get(what) ?? [];
 
   const log = (source: string, plotId: number, event: string, amount: number) =>
     db.run('INSERT INTO farm_log (day, source, plot_id, event, amount) VALUES (?, ?, ?, ?, ?)', [day, source, plotId, event, amount]);
   const addItem = (item: string, n: number) => db.run('UPDATE inventory SET quantity = quantity + ? WHERE item = ?', [n, item]);
 
   // Everyone gets hungrier; only fed, cheerful creatures work.
-  for (const c of creatures) if (!SPECIES[c.name]?.ethereal) c.hunger = clamp(c.hunger + 2);
+  for (const c of creatures) if (!speciesOf(c)?.ethereal) c.hunger = clamp(c.hunger + 2);
   const works = new Map(creatures.map((c) => [c.id, c.hunger < 8 && c.mood > 3]));
   const moodDelta = new Map(creatures.map((c) => [c.id, 0]));
   const bump = (id: number, d: number) => moodDelta.set(id, (moodDelta.get(id) ?? 0) + d);
 
-  const chimniuses = creatures.filter((c) => c.name === 'Chimnius');
+  const chimniuses = creatures.filter((c) => species(c) === 'Chimnius');
+  let echoed = false;
   const plotById = new Map(plots.map((p) => [p.id, p]));
   const watered = new Set<number>();
-  const soggy = new Set<number>();
+  const soggy = new Map<number, string>();
   let nullkinPlot: number | null = null;
 
   for (const c of creatures) {
     const working = works.get(c.id);
-    switch (c.name) {
+    switch (species(c)) {
       case 'Squeal':
         if (working) {
           const p = plotById.get(c.plot_id);
           if (p) p.tilled = 1;
           log(c.name, c.plot_id, 'tilled', 1);
-          lines.push(`🐷 Squeal tilled plot ${c.plot_id}.`);
+          note('tilled', c.name);
         }
         break;
       case 'Henbell':
         if (working) {
           addItem('egg', 1);
           log(c.name, c.plot_id, 'laid_egg', 1);
-          lines.push('🥚 Henbell laid an egg.');
+          note('egg', c.name);
         }
         log(c.name, c.plot_id, 'rang_bell', 1);
         for (const other of creatures) if (other.id !== c.id) bump(other.id, 1);
@@ -86,7 +105,7 @@ export function runNight(db: Database): NightReport {
         if (working) {
           addItem('shiny_pebble', 1);
           log(c.name, c.plot_id, 'found', 1);
-          lines.push('🐢 Sortoise dug something up.');
+          note('dug', c.name);
         }
         break;
       case 'Chimnius':
@@ -100,17 +119,20 @@ export function runNight(db: Database): NightReport {
               log(c.name, p.id, 'watered', 1);
             }
           }
-          lines.push(`💧 Puddlewump watered the plots around plot ${c.plot_id}.`);
+          note('watered', c.name);
         }
         // Wet or not, a puddle's own plot is always soggy.
-        soggy.add(c.plot_id);
+        soggy.set(c.plot_id, c.name);
         break;
       case 'Echolamb': {
         if (working) {
           addItem('echo_wool', 1);
           log(c.name, c.plot_id, 'grew_wool', 1);
-          lines.push('🧶 Echolamb grew a bundle of wool.');
+          note('wool', c.name);
         }
+        // The echo happens once a night, however many Echolambs there are.
+        if (echoed) break;
+        echoed = true;
         // "Repeats yesterday": copies the previous night's entries as exact duplicates.
         const before = Number(all<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM farm_log')[0].n);
         db.run(
@@ -119,8 +141,8 @@ export function runNight(db: Database): NightReport {
            WHERE day = ? AND source IS NOT NULL AND source NOT IN ('Echolamb', 'Frost', 'Farmer')`,
           [day - 1],
         );
-        const echoed = Number(all<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM farm_log')[0].n) - before;
-        if (echoed) lines.push(`🐑 Baa… baa… baa… (the Ledger feels oddly repetitive).`);
+        const copies = Number(all<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM farm_log')[0].n) - before;
+        if (copies) lines.push(`🐑 Baa… baa… baa… (the Ledger feels oddly repetitive).`);
         break;
       }
       case 'Nullkin':
@@ -131,22 +153,22 @@ export function runNight(db: Database): NightReport {
 
   // Smoke bothers sensitive creatures near any Chimnius.
   for (const c of creatures) {
-    if (!SPECIES[c.name]?.dislikesSmoke) continue;
+    if (!speciesOf(c)?.dislikesSmoke) continue;
     if (chimniuses.some((ch) => plotDistance(ch.plot_id, c.plot_id) <= 1)) {
       bump(c.id, -2);
       log(c.name, c.plot_id, 'coughed', 1);
-      lines.push(`😷 ${c.name} coughed all night.`);
+      note('coughed', c.name);
     }
   }
 
   // Hunger affects mood.
   for (const c of creatures) {
-    if (SPECIES[c.name]?.ethereal) {
+    if (speciesOf(c)?.ethereal) {
       // Ghosts don't eat, so they neither grumble nor perk up from food.
     } else if (c.hunger >= 8) {
       bump(c.id, -1);
       log(c.name, c.plot_id, 'grumbled', 1);
-      lines.push(`😠 ${c.name} grumbled with hunger.`);
+      note('grumbled', c.name);
     } else if (c.hunger < 5) {
       bump(c.id, 1);
     }
@@ -178,8 +200,8 @@ export function runNight(db: Database): NightReport {
     } else if (p.crop === 'snoutroot' && soggy.has(p.id) && p.growth < 100) {
       // Root crops rot in a puddle's soggy soil instead of growing.
       p.growth = Math.max(0, p.growth - 15);
-      log('Puddlewump', p.id, 'rotted', 1);
-      lines.push(`🤢 The Snoutroot on plot ${p.id} is rotting in soggy soil.`);
+      log(soggy.get(p.id)!, p.id, 'rotted', 1);
+      note('rotted', p.id);
     } else if (p.crop && p.growth < 100) {
       const crop = CROPS[p.crop];
       const rate = crop ? crop.rate : 25;
@@ -195,6 +217,15 @@ export function runNight(db: Database): NightReport {
       p.id,
     ]);
   }
+  const one = (what: string) => who(what).length === 1;
+  if (who('tilled').length) lines.push(`🐷 ${listNames(who('tilled'))} tilled ${one('tilled') ? 'its plot' : 'their plots'}.`);
+  if (who('egg').length) lines.push(one('egg') ? `🥚 ${who('egg')[0]} laid an egg.` : `🥚 ${who('egg').length} eggs laid (${listNames(who('egg'))}).`);
+  if (who('dug').length) lines.push(`🐢 ${listNames(who('dug'))} dug ${one('dug') ? 'something' : 'things'} up.`);
+  if (who('watered').length) lines.push(`💧 ${listNames(who('watered'))} watered the plots around ${one('watered') ? 'it' : 'them'}.`);
+  if (who('wool').length) lines.push(`🧶 ${listNames(who('wool'))} grew ${one('wool') ? 'a bundle' : 'bundles'} of wool.`);
+  if (who('coughed').length) lines.push(`😷 ${listNames(who('coughed'))} coughed all night.`);
+  if (who('grumbled').length) lines.push(`😠 ${listNames(who('grumbled'))} grumbled with hunger.`);
+  if (who('rotted').length) lines.push(`🤢 Snoutroot is rotting in soggy soil on plot${one('rotted') ? '' : 's'} ${listNames(who('rotted'))}.`);
   if (weather.sky === 'rain') lines.push('🌧️ Rain soaked every plot.');
   if (frosted) lines.push(`❄️ Frost hit ${frosted} plot${frosted === 1 ? '' : 's'}${lost ? ` — ${lost} crop${lost === 1 ? '' : 's'} lost!` : '.'}`);
 

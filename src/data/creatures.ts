@@ -107,6 +107,16 @@ export const SPECIES: Record<string, Species> = {
   },
 };
 
+const BY_KIND = new Map(Object.values(SPECIES).map((s) => [s.kind, s]));
+
+/**
+ * The species of a creature row. Creatures are matched by `kind`, so a farm can have
+ * several of one species (Henbell, Clang and Peal are all bell-fowl).
+ */
+export function speciesOf(c: { kind?: string | null; name?: string | null }): Species | undefined {
+  return (c.kind ? BY_KIND.get(c.kind) : undefined) ?? (c.name ? SPECIES[c.name] : undefined);
+}
+
 /** Creatures planned for later chapters, shown as silhouettes in the Bestiary. */
 export const COMING_SOON = ['Glimmerwick', 'Tumblecrag', 'Mossgrandle', 'Moolump', 'Twinnet'];
 

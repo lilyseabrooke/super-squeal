@@ -2,7 +2,7 @@ import type { SqlValue } from 'sql.js';
 import { CROPS, GOODS, itemEmoji, itemLabel } from './data/crops';
 import { COMING_SOON, SPECIES } from './data/creatures';
 import { chapterOf, QUESTS } from './data/quests';
-import { PLOT_COUNT, PLOT_COLS } from './data/schema';
+import { fieldName } from './data/schema';
 import { BADGES, type Action, type Game, type QueryOutcome, type Toast } from './game';
 import { isSqlTemplate } from './sqlHelp';
 
@@ -82,7 +82,7 @@ export function mountUI(root: HTMLElement, game: Game) {
         <div class="panel quest" id="quest"></div>
         <div class="panel ledger">
           <div class="panel-head">
-            <h2>📜 The Ledger</h2>
+            <h2>📜 The Ledger <span id="quill-badge"></span></h2>
             <span class="muted small">Ctrl/⌘ + Enter to run</span>
           </div>
           <textarea id="sql" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="SQL query" placeholder="SELECT * FROM creatures;"></textarea>
@@ -173,7 +173,7 @@ export function mountUI(root: HTMLElement, game: Game) {
           .filter(Boolean)
           .join(' ');
         const label = `Plot ${p.id}${crop ? `, ${crop.label} ${p.growth}%` : ', empty'}${here.length ? `, ${here.map((c) => c.name).join(' and ')}` : ''}`;
-        return `<button class="${cls}" data-act="select-plot" data-plot="${p.id}" aria-label="${esc(label)}" aria-pressed="${selectedPlot === p.id}">
+        return `<button class="${cls}" style="grid-row:${p.row};grid-column:${p.col}" data-act="select-plot" data-plot="${p.id}" aria-label="${esc(label)}" aria-pressed="${selectedPlot === p.id}">
           <span class="plot-id">${p.id}</span>
           ${ready ? '<span class="sparkle">✨</span>' : ''}
           <span class="plot-crop">${center}</span>
@@ -183,6 +183,7 @@ export function mountUI(root: HTMLElement, game: Game) {
       })
       .join('');
 
+    const cols = Math.max(...plots.map((x) => x.col));
     let detail = '<p class="muted small">Click a plot to plant, water or harvest.</p>';
     const p = plots.find((x) => x.id === selectedPlot);
     if (p) {
@@ -202,7 +203,7 @@ export function mountUI(root: HTMLElement, game: Game) {
       }
       actions.push(`<button class="btn small" data-act="water" data-plot="${p.id}" ${p.moisture >= 3 ? 'disabled' : ''}>💧 Water</button>`);
       detail = `<div class="plot-detail">
-        <div class="plot-detail-head"><strong>Plot ${p.id}</strong> <span class="muted small">row ${p.row}, col ${p.col}</span></div>
+        <div class="plot-detail-head"><strong>Plot ${p.id}</strong> <span class="muted small">${cols > 4 ? `${fieldName(p)} · ` : ''}row ${p.row}, col ${p.col}</span></div>
         <div class="facts">
           <span>${crop ? `${crop.emoji} ${esc(crop.label)} · ${p.growth}%` : 'Empty soil'}</span>
           <span>💧 ${p.moisture}/3</span>
@@ -214,14 +215,12 @@ export function mountUI(root: HTMLElement, game: Game) {
     }
 
     $('farm').innerHTML = `<div class="panel-head"><h2>🌾 Farm</h2></div>
-      <div class="grid" style="grid-template-columns: repeat(${PLOT_COLS}, 1fr)">${tiles}</div>${detail}`;
+      <div class="grid ${cols > 4 ? 'big' : ''}" style="grid-template-columns: repeat(${cols}, 1fr)">${tiles}</div>${detail}`;
   }
 
-  function renderCreatures(creatures: CreatureRow[]) {
+  function renderCreatures(creatures: CreatureRow[], plotIds: number[]) {
     const plotOptions = (current: number) =>
-      Array.from({ length: PLOT_COUNT }, (_, i) => i + 1)
-        .map((n) => `<option value="${n}" ${n === current ? 'selected' : ''}>Plot ${n}</option>`)
-        .join('');
+      plotIds.map((n) => `<option value="${n}" ${n === current ? 'selected' : ''}>Plot ${n}</option>`).join('');
     const cards = creatures
       .map(
         (c) => `<div class="creature">
@@ -238,7 +237,7 @@ export function mountUI(root: HTMLElement, game: Game) {
       </div>`,
       )
       .join('');
-    $('creatures').innerHTML = `<div class="panel-head"><h2>🐾 Creatures</h2><span class="muted small">${creatures.length}</span></div><div class="creature-list">${cards}</div>`;
+    $('creatures').innerHTML = `<div class="panel-head"><h2>🐾 Creatures</h2><span class="muted small">${creatures.length}</span></div><div class="creature-list ${creatures.length > 6 ? 'scroll' : ''}">${cards}</div>`;
   }
 
   function renderBarn() {
@@ -268,7 +267,7 @@ export function mountUI(root: HTMLElement, game: Game) {
     const q = game.currentQuest();
     const el = $('quest');
     if (!q) {
-      el.innerHTML = `<div class="keystone"><div class="avatar" aria-hidden="true">🌾</div><div class="bubble"><p><strong>You did it!</strong> You've finished every chapter written so far. The Hollow is quieter now… but strange footprints lead toward the pond.</p><p><strong>Chapter 7: The Ledger Quill</strong> (writing your own <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code>) is coming soon. Until then the Ledger is yours. Keep farming and keep asking it questions!</p></div></div>`;
+      el.innerHTML = `<div class="keystone"><div class="avatar" aria-hidden="true">🌾</div><div class="bubble"><p><strong>You did it!</strong> You've finished every chapter written so far. The Hollow is quieter now… but strange footprints lead toward the pond.</p><p><strong>Chapter 8: JOIN</strong> (connecting tables together) is coming soon. Until then the Ledger, and the Quill, are yours. Keep farming and keep asking it questions!</p></div></div>`;
       return;
     }
     const ch = chapterOf(q);
@@ -305,7 +304,9 @@ export function mountUI(root: HTMLElement, game: Game) {
         .map((c, i) => `<button class="btn choice" data-act="answer" data-choice="${i}">${esc(c)}</button>`)
         .join('')}</div>`;
     } else if (q.kind === 'action') {
-      interaction = `<p class="muted small">👈 Use the farm panels to do this.</p>`;
+      interaction = /^(INSERT|UPDATE|DELETE)\s/.test(q.hints.blank)
+        ? `<p class="muted small">🪶 Write it in the Ledger below.</p>`
+        : `<p class="muted small">👈 Use the farm panels to do this.</p>`;
     } else if (q.kind === 'goal') {
       interaction = `<ul class="goals">${game
         .goalStatus(q)
@@ -344,7 +345,7 @@ export function mountUI(root: HTMLElement, game: Game) {
         q.concept
           ? `<details class="concept" open><summary>📘 New spell: <strong>${esc(q.concept.title)}</strong></summary>
               <p>${md(q.concept.body)}</p>
-              ${q.concept.example ? `<p class="small muted">Example (it uses a different table on purpose, so it's not the answer):</p><pre><code>${esc(q.concept.example)}</code></pre>` : ''}</details>`
+              ${q.concept.example ? `<p class="small muted">Example (it does a different job on purpose, so it's not the answer):</p><pre><code>${esc(q.concept.example)}</code></pre>` : ''}</details>`
           : ''
       }
       ${interaction}
@@ -363,12 +364,19 @@ export function mountUI(root: HTMLElement, game: Game) {
         ${o.rawError ? `<details class="raw"><summary>What the Ledger actually said</summary><code>${esc(o.rawError)}</code></details>` : ''}</div>`;
       return;
     }
-    const r = o.result!;
+    const wrote = o.write
+      ? `<div class="feedback ok wrote">🪶 ${o.write.changed} row${o.write.changed === 1 ? '' : 's'} changed.${
+          o.write.effects.length ? `<ul>${o.write.effects.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : ''
+        }</div>`
+      : '';
+    const r = o.result ?? { columns: [], rows: [] };
     const fb = o.feedback ? `<div class="feedback ${o.feedback.ok ? 'ok' : 'nope'}">${o.feedback.ok ? '🎉' : '🤔'} ${md(o.feedback.message)}</div>` : '';
     const body = r.columns.length
       ? `<p class="muted small">${r.rows.length} row${r.rows.length === 1 ? '' : 's'}</p>${table(r.columns, r.rows)}`
-      : '<p class="muted small">Done. (That query returned no table.)</p>';
-    el.innerHTML = fb + body;
+      : o.write
+        ? ''
+        : '<p class="muted small">Done. (That query returned no table.)</p>';
+    el.innerHTML = wrote + fb + body;
   }
 
   function renderSide() {
@@ -430,13 +438,22 @@ export function mountUI(root: HTMLElement, game: Game) {
     }
   }
 
+  function renderQuillBadge() {
+    $('quill-badge').innerHTML = game.progress.quill ? '<span class="chip small quill" title="Your SQL can change the farm">🪶 Quill</span>' : '';
+    $('run').textContent = game.progress.quill ? 'Run ▶' : 'Run query ▶';
+  }
+
   function render() {
+    renderQuillBadge();
     const creatures = game.all<CreatureRow>('SELECT * FROM creatures ORDER BY id');
     const plots = game.all<PlotRow>('SELECT * FROM plots ORDER BY id');
     renderTopbar();
     renderNight();
     renderFarm(plots, creatures);
-    renderCreatures(creatures);
+    renderCreatures(
+      creatures,
+      plots.map((p) => p.id),
+    );
     renderBarn();
     renderQuest();
     renderSide();
@@ -567,4 +584,10 @@ export function mountUI(root: HTMLElement, game: Game) {
 
   game.subscribe(render);
   render();
+
+  // Saves are batched, so make sure nothing is lost when the tab is closed or hidden.
+  window.addEventListener('pagehide', () => game.flush());
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') game.flush();
+  });
 }

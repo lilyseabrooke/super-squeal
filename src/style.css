@@ -691,6 +691,59 @@ table.barn td:last-child {
   font-size: 0.9rem;
 }
 
+/* ───────── the big farm & the quill ───────── */
+
+.grid.big {
+  gap: 3px;
+}
+
+.grid.big .plot {
+  border-radius: 6px;
+  border-width: 1.5px;
+}
+
+.grid.big .plot-id {
+  font-size: 0.55rem;
+  top: 1px;
+  left: 3px;
+}
+
+.grid.big .plot-crop {
+  font-size: clamp(0.8rem, 2vw, 1.15rem);
+}
+
+.grid.big .plot-creatures {
+  font-size: clamp(0.65rem, 1.6vw, 0.85rem);
+}
+
+.grid.big .plot-growth {
+  height: 3px;
+  bottom: 2px;
+  left: 3px;
+  right: 3px;
+}
+
+.grid.big .sparkle {
+  font-size: 0.6rem;
+}
+
+.creature-list.scroll {
+  max-height: 460px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.chip.small.quill {
+  background: var(--warn-soft);
+  vertical-align: middle;
+  margin-left: 0.3rem;
+}
+
+.feedback.wrote ul {
+  margin: 0.3rem 0 0;
+  padding-left: 1.2rem;
+}
+
 /* ───────── free play ───────── */
 
 .chip.small.free {

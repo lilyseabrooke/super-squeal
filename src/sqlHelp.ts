@@ -27,7 +27,7 @@ export function sameQuery(a: string, b: string): boolean {
 
 /** True for hint text that is a SQL template (vs. plain instructions like "With a plot selected…"). */
 export function isSqlTemplate(s: string): boolean {
-  return /^(SELECT|WITH)\s/.test(s.trim());
+  return /^(SELECT|WITH|INSERT|UPDATE|DELETE)\s/.test(s.trim());
 }
 
 export const BLANK = '___';

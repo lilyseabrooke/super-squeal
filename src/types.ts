@@ -19,6 +19,10 @@ export interface Stats {
   earned: number;
   harvestedBy: Record<string, number>;
   soldBy: Record<string, number>;
+  /** Successful Ledger Quill writes. */
+  writes: number;
+  /** What the Quill has been used for: fed, planted, harvested, sold, deleted… */
+  quill: Record<string, number>;
 }
 
 export interface Progress {
@@ -52,6 +56,8 @@ export interface QuestApi {
   scalar(sql: string, params?: SqlValue[]): SqlValue;
   system(sql: string, params?: SqlValue[]): void;
   meet(name: string): void;
+  /** Grid distance between two plots: 0 = same plot, 1 = next door. */
+  plotDistance(a: number, b: number): number;
 }
 
 interface QuestBase {

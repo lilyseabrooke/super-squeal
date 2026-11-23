@@ -7,7 +7,7 @@ export const STARTING_COINS = 20;
 export const WEATHER_DAYS = 365;
 
 /** Bump this and add a step to migrate() whenever the Ledger's shape changes. */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** `source` and `amount` may be NULL: the Nullkin (chapter 6) erases them. */
 const FARM_LOG_TABLE = `CREATE TABLE farm_log (
@@ -17,6 +17,16 @@ const FARM_LOG_TABLE = `CREATE TABLE farm_log (
   plot_id INTEGER NOT NULL,
   event TEXT NOT NULL,
   amount INTEGER
+);`;
+
+/** Buy and sell orders. Written by the Quill (chapter 7) and by the Barn buttons. */
+const ORDERS_TABLE = `CREATE TABLE orders (
+  id INTEGER PRIMARY KEY,
+  day INTEGER,
+  action TEXT NOT NULL,
+  item TEXT NOT NULL,
+  quantity INTEGER NOT NULL,
+  total INTEGER
 );`;
 
 function quote(s: string): string {
@@ -86,6 +96,7 @@ CREATE TABLE weather (
   sky TEXT NOT NULL
 );
 ${FARM_LOG_TABLE}
+${ORDERS_TABLE}
 INSERT INTO farm (day, coins) VALUES (1, ${STARTING_COINS});
 INSERT INTO creatures (name, kind, emoji, plot_id, hunger, mood) VALUES ('Squeal', 'mud-beast', '🐷', 6, 7, 6);
 `);
@@ -130,6 +141,7 @@ export function migrate(db: Database): void {
       ALTER TABLE farm_log_v2 RENAME TO farm_log;
     `);
   }
+  if (version < 3) db.run(ORDERS_TABLE);
   // New goods are added idempotently so any older save picks them up.
   for (const [item, g] of Object.entries(GOODS)) {
     db.run('INSERT OR IGNORE INTO inventory VALUES (?, 0)', [item]);
@@ -138,15 +150,41 @@ export function migrate(db: Database): void {
   db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }
 
-export function plotPos(id: number): { row: number; col: number } {
-  return { row: Math.floor((id - 1) / PLOT_COLS) + 1, col: ((id - 1) % PLOT_COLS) + 1 };
+export interface PlotPos {
+  row: number;
+  col: number;
 }
 
 /** 0 = same plot, 1 = orthogonally adjacent, larger = further away. */
-export function plotDistance(a: number, b: number): number {
-  const pa = plotPos(a);
-  const pb = plotPos(b);
-  return Math.abs(pa.row - pb.row) + Math.abs(pa.col - pb.col);
+export function gridDistance(a: PlotPos, b: PlotPos): number {
+  return Math.abs(a.row - b.row) + Math.abs(a.col - b.col);
+}
+
+/** Plot positions come from the plots table, so the farm can grow beyond its first 12 plots. */
+export function plotPositions(db: Database): Map<number, PlotPos> {
+  const out = new Map<number, PlotPos>();
+  const res = db.exec('SELECT id, row, col FROM plots')[0];
+  for (const [id, row, col] of res?.values ?? []) out.set(Number(id), { row: Number(row), col: Number(col) });
+  return out;
+}
+
+export function plotDistance(db: Database, a: number, b: number): number {
+  const pos = plotPositions(db);
+  const pa = pos.get(a);
+  const pb = pos.get(b);
+  return pa && pb ? gridDistance(pa, pb) : Infinity;
+}
+
+/** The fields Mayor Thimble grants in chapter 7: east of the home field, and a whole field to the south. */
+export const EXPANSION_FIELDS = [
+  { name: 'East field', rows: [1, 3], cols: [5, 8] },
+  { name: 'South field', rows: [4, 6], cols: [1, 8] },
+] as const;
+
+export function fieldName(p: PlotPos): string {
+  if (p.row >= 4) return 'South field';
+  if (p.col >= 5) return 'East field';
+  return 'Home field';
 }
 
 export const PLOT_COUNT = PLOT_ROWS * PLOT_COLS;

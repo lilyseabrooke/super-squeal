@@ -1,6 +1,5 @@
 import type { Chapter, Quest, QuestApi, Stats } from '../types';
 import { SPECIES } from './creatures';
-import { plotDistance } from './schema';
 
 export const CHAPTERS: Chapter[] = [
   { n: 1, title: 'Welcome to Bramblewick Hollow', concept: 'SELECT' },
@@ -12,6 +11,8 @@ export const CHAPTERS: Chapter[] = [
   { n: 5.5, title: 'The Dry Spell', concept: 'Free play', free: true },
   { n: 6, title: 'Things That Go Missing', concept: 'NULL & DISTINCT' },
   { n: 6.5, title: 'The Ledger Audit', concept: 'Free play', free: true },
+  { n: 7, title: 'The Ledger Quill', concept: 'UPDATE, INSERT & DELETE' },
+  { n: 7.5, title: 'The Big Farm', concept: 'Free play', free: true },
 ];
 
 function arrive(api: QuestApi, name: string, plot: number, hunger: number, mood: number): string {
@@ -42,6 +43,41 @@ function since(api: QuestApi, pick: (s: Stats) => number): number {
 }
 const lowestMood = (api: QuestApi) => Number(api.scalar('SELECT MIN(mood) FROM creatures') ?? 0);
 const plantedNow = (api: QuestApi) => Number(api.scalar('SELECT COUNT(*) FROM plots WHERE crop IS NOT NULL'));
+const quillUses = (api: QuestApi, kind: string) => since(api, (s) => s.quill?.[kind] ?? 0);
+const ordersSince = (api: QuestApi, action: string, item: string | null, minQty: number) =>
+  Number(
+    api.scalar(
+      `SELECT COUNT(*) FROM orders WHERE action = ? AND quantity >= ? AND day >= ? ${item ? 'AND item = ?' : ''}`,
+      item ? [action, minQty, api.progress.questStart.day, item] : [action, minQty, api.progress.questStart.day],
+    ),
+  );
+
+/** The new land and creatures Mayor Thimble grants at the start of chapter 7. */
+function expandFarm(api: QuestApi): string {
+  let id = 13;
+  const add = (row: number, col: number) =>
+    api.system(
+      'INSERT INTO plots (id, row, col, crop, growth, moisture, warmth, tilled) VALUES (?, ?, ?, NULL, 0, 2, (SELECT temperature FROM weather WHERE day = ?), 0)',
+      [id++, row, col, api.day],
+    );
+  for (let row = 1; row <= 3; row++) for (let col = 5; col <= 8; col++) add(row, col); // East field: 13-24
+  for (let row = 4; row <= 6; row++) for (let col = 1; col <= 8; col++) add(row, col); // South field: 25-48
+  const newcomers: [string, string, number][] = [
+    ['Clang', 'Henbell', 14],
+    ['Dingle', 'Henbell', 20],
+    ['Peal', 'Henbell', 43],
+    ['Truffles', 'Squeal', 29],
+    ['Snorkel', 'Squeal', 38],
+    ['Splash', 'Puddlewump', 35],
+    ['Tidy', 'Sortoise', 47],
+  ];
+  for (const [name, species, plot] of newcomers) {
+    const sp = SPECIES[species];
+    api.system('INSERT INTO creatures (name, kind, emoji, plot_id, hunger, mood) VALUES (?, ?, ?, ?, 7, 6)', [name, sp.kind, sp.emoji, plot]);
+  }
+  return '🗺️ Mayor Thimble granted you the East field and the South field (plots 13–48), and 7 new creatures moved in!';
+}
+
 const freePlay =
   "This is **free play**: there's no set query to write. Use anything you've learned, in any order, at your own pace. The goals tick off by themselves as you reach them.";
 
@@ -504,7 +540,7 @@ export const QUESTS: Quest[] = [
     check: (api) => {
       const h = Number(api.scalar("SELECT plot_id FROM creatures WHERE name = 'Henbell'"));
       const c = Number(api.scalar("SELECT plot_id FROM creatures WHERE name = 'Chimnius'"));
-      return plotDistance(h, c) > 1;
+      return api.plotDistance(h, c) > 1;
     },
     reward: { coins: 20, xp: 40 },
   },
@@ -987,6 +1023,247 @@ export const QUESTS: Quest[] = [
       answer: 'Run `SELECT COUNT(*) FROM farm_log WHERE amount IS NULL;` (today: the Nullkin nibbles more every night!)',
     },
     reward: { coins: 25, xp: 40 },
+  },
+  // ───────────────── Chapter 7: The Ledger Quill ─────────────────
+  {
+    id: 'c7-land',
+    chapter: 7,
+    kind: 'action',
+    title: 'A farm four times the size',
+    onStart: expandFarm,
+    story:
+      "The audit went *so* well that Mayor Thimble has granted you two more fields. The **East field** and the **South field** take you from 12 plots to **48**! Seven new creatures came with the land: three Henbells (Clang, Dingle and Peal), two Squeals (Truffles and Snorkel), a second Puddlewump (Splash) and another Sortoise (Tidy).\n\nThey're all hungry after the move.",
+    task: 'Feed **every** creature on the farm (all of them at hunger 2 or less).',
+    hints: {
+      nudge: 'Every creature card has a Feed button. All fourteen of them…',
+      blank: "Check who's still hungry with `SELECT name, hunger FROM creatures WHERE hunger > 2;`",
+      answer: 'Press 🍽️ Feed on every creature card. Yes, it’s a lot of clicking. Hold that thought.',
+    },
+    check: (api) => Number(api.scalar('SELECT MAX(hunger) FROM creatures')) <= 2,
+    reward: { coins: 10, xp: 15 },
+  },
+  {
+    id: 'c7-morning',
+    chapter: 7,
+    kind: 'action',
+    title: 'And again tomorrow',
+    story: "Phew. That took a while. Let's get some sleep… though I have a feeling they'll be hungry again by morning.",
+    task: 'End the day.',
+    hints: { nudge: 'Top of the screen.', blank: 'Press 🌙 End day.', answer: 'Press 🌙 End day.' },
+    check: endedDay,
+    reward: { coins: 5, xp: 10 },
+  },
+  {
+    id: 'c7-quill',
+    chapter: 7,
+    kind: 'action',
+    title: 'The Ledger Quill',
+    onStart: (api) => {
+      api.progress.quill = true;
+      return '🪶 You received the Ledger Quill! The Ledger now accepts INSERT, UPDATE and DELETE.';
+    },
+    story:
+      "Hungry again, every one of them. There has to be a better way… and there is!\n\nYou've earned the **Ledger Quill**. Until now the Ledger was read-only. With the Quill, the SQL you *write* changes the farm itself, within the Ledger's laws. Remember all those `UPDATE` spells the buttons whispered? Now you can cast them yourself, on as many rows as you like at once.",
+    task: 'Feed every creature with a **single** `UPDATE`.',
+    concept: {
+      title: 'UPDATE … SET … WHERE',
+      body: "`UPDATE table SET column = value` changes rows. Add `WHERE` to change only some of them. With **no** `WHERE`, it changes *every* row, which is exactly what you want here.",
+      example: "UPDATE plots SET moisture = 3 WHERE id = 1;",
+    },
+    hints: {
+      nudge: 'Set `hunger` to 0 in the `creatures` table. No `WHERE` needed: you want everyone.',
+      blank: 'UPDATE creatures SET hunger = ___;',
+      answer: 'Write `UPDATE creatures SET hunger = 0;` and run it.',
+    },
+    check: (api) => quillUses(api, 'fed') >= 10,
+    reward: { coins: 20, xp: 30 },
+  },
+  {
+    id: 'c7-buy',
+    chapter: 7,
+    kind: 'action',
+    title: 'Shopping by letter',
+    story:
+      "The South field needs seeds. The Quill can't *conjure* seeds into your barn. The Ledger has laws, and the barn only changes when you trade. But there's a new table, `orders`, where the Hollow's market reads its mail. Add a row to it, and the market fills it straight away.",
+    task: "Buy **8 Snoutroot seeds** with one `INSERT INTO orders`.",
+    concept: {
+      title: 'INSERT INTO … VALUES',
+      body: '`INSERT INTO table (columns) VALUES (values)` adds a new row. List the columns you are filling in, then the values, in the same order. Text goes in single quotes.',
+      example: "INSERT INTO orders (action, item, quantity) VALUES ('sell', 'egg', 2);",
+    },
+    hints: {
+      nudge: "The `action` is `'buy'`, the `item` is `'snoutroot_seed'`, and the `quantity` is 8.",
+      blank: "INSERT INTO orders (action, item, quantity) VALUES ('buy', '___', ___);",
+      answer: "Write `INSERT INTO orders (action, item, quantity) VALUES ('buy', 'snoutroot_seed', 8);`",
+    },
+    check: (api) => quillUses(api, 'bought') > 0 && ordersSince(api, 'buy', 'snoutroot_seed', 8) > 0,
+    reward: { coins: 15, xp: 25 },
+  },
+  {
+    id: 'c7-plant',
+    chapter: 7,
+    kind: 'action',
+    title: 'Planting a whole row',
+    story:
+      "Now for the fun part. Row 4 is the first row of the South field: eight empty plots. Planting is just an `UPDATE` too. Set the `crop` (and `growth = 0`), and the Ledger takes a seed from your barn for each plot.\n\nThis time you only want *some* rows changed, so `WHERE` matters.",
+    task: 'Plant **Snoutroot** on every empty plot in **row 4**, with one `UPDATE`.',
+    hints: {
+      nudge: "Set `crop = 'snoutroot', growth = 0`, but only `WHERE row = 4 AND crop IS NULL`.",
+      blank: "UPDATE plots SET crop = 'snoutroot', growth = 0 WHERE row = ___ AND crop IS NULL;",
+      answer: "Write `UPDATE plots SET crop = 'snoutroot', growth = 0 WHERE row = 4 AND crop IS NULL;`",
+    },
+    check: (api) => quillUses(api, 'planted') > 0 && Number(api.scalar('SELECT COUNT(*) FROM plots WHERE row = 4 AND crop IS NULL')) === 0,
+    reward: { coins: 20, xp: 30 },
+  },
+  {
+    id: 'c7-laws',
+    chapter: 7,
+    kind: 'answer',
+    title: 'The Ledger’s laws',
+    story:
+      "With great Quill comes great temptation. I *know* you're wondering what happens if you just… write yourself some coins. Go on, I won't tell. Try `UPDATE farm SET coins = 9999;`",
+    task: '**What happens when you try to write your own coins?**',
+    hints: {
+      nudge: 'Just run it and read what the Ledger says. Then check your coins at the top.',
+      blank: 'Run `UPDATE farm SET coins = 9999;` and look at the message.',
+      answer: 'The Ledger refuses, and nothing changes. Coins only come from trading (the `orders` table).',
+    },
+    choices: ['You get 9999 coins', 'The Ledger refuses and nothing changes. Coins only come from trading', 'The Nullkin eats your coins'],
+    correct: 1,
+    reward: { coins: 10, xp: 20 },
+  },
+  {
+    id: 'c7-dry',
+    chapter: 7,
+    kind: 'action',
+    title: 'A hot wind',
+    onStart: (api) => {
+      api.system('UPDATE plots SET moisture = 0 WHERE crop IS NOT NULL');
+      return '🌬️ A hot wind blew across the Hollow and dried out every planted plot!';
+    },
+    story:
+      "Oh no, a hot wind dried out every plot with a crop in it. Dry crops grow at half speed. That's a lot of 💧 buttons to press… or one `UPDATE` with the right `WHERE`.",
+    task: 'Water every plot that has a crop and is drying out, with one `UPDATE`.',
+    hints: {
+      nudge: 'Set `moisture = 3` on plots `WHERE crop IS NOT NULL AND moisture < 3`.',
+      blank: 'UPDATE plots SET moisture = 3 WHERE crop IS NOT NULL AND moisture < ___;',
+      answer: 'Write `UPDATE plots SET moisture = 3 WHERE crop IS NOT NULL AND moisture < 3;`',
+    },
+    check: (api) =>
+      quillUses(api, 'watered') > 0 && Number(api.scalar('SELECT COUNT(*) FROM plots WHERE crop IS NOT NULL AND moisture < 3')) === 0,
+    reward: { coins: 15, xp: 25 },
+  },
+  {
+    id: 'c7-delete',
+    chapter: 7,
+    kind: 'action',
+    title: 'Sweeping up after a ghost',
+    story:
+      "The Nullkin's unsigned `nibbled` notes are cluttering the log. The Ledger won't let you *forge* history, but you're allowed to tidy it.\n\n`DELETE` is the most dangerous spell in the Quill: forget the `WHERE`, and it removes **every** row. (If that ever happens, ⏪ Rewind puts the day back.)",
+    task: 'Delete every row from `farm_log` whose `source` is missing.',
+    concept: {
+      title: 'DELETE FROM … WHERE',
+      body: '`DELETE FROM table WHERE condition` removes the matching rows. **Always** write the `WHERE` first and check it with a `SELECT` before you run the `DELETE`.',
+      example: "DELETE FROM farm_log WHERE event = 'rang_bell';",
+    },
+    hints: {
+      nudge: 'First, check which rows will go: `SELECT * FROM farm_log WHERE source IS NULL;`. Then swap `SELECT *` for `DELETE`.',
+      blank: 'DELETE FROM farm_log WHERE source IS ___;',
+      answer: 'Write `DELETE FROM farm_log WHERE source IS NULL;`',
+    },
+    check: (api) => quillUses(api, 'deleted') > 0 && Number(api.scalar('SELECT COUNT(*) FROM farm_log WHERE source IS NULL')) === 0,
+    reward: { coins: 15, xp: 25 },
+  },
+  {
+    id: 'c7-sell',
+    chapter: 7,
+    kind: 'action',
+    title: 'Selling in bulk',
+    story:
+      "Four Henbells means a *lot* of eggs. Selling works just like buying: one row in `orders`.\n\nHere's a trick: a `VALUES` list can contain a little `SELECT` in brackets, so you don't even need to know how many you have.",
+    task: 'Sell **at least 3** of something with a single `INSERT INTO orders`.',
+    hints: {
+      nudge: "Check what you have with `SELECT * FROM inventory WHERE quantity >= 3;`, then insert a `'sell'` order.",
+      blank: "INSERT INTO orders (action, item, quantity) VALUES ('sell', 'egg', (SELECT quantity FROM inventory WHERE item = '___'));",
+      answer:
+        "Write `INSERT INTO orders (action, item, quantity) VALUES ('sell', 'egg', (SELECT quantity FROM inventory WHERE item = 'egg'));`. If you have fewer than 3 eggs, end a day first, or sell something else.",
+    },
+    check: (api) => quillUses(api, 'sold') > 0 && ordersSince(api, 'sell', null, 3) > 0,
+    reward: { coins: 15, xp: 25 },
+  },
+  {
+    id: 'c7-harvest',
+    chapter: 7,
+    kind: 'action',
+    title: 'Harvest by the row',
+    story:
+      "Last spell of the chapter. Harvesting is an `UPDATE` too: set a ripe plot's `crop` to `NULL` and the Ledger puts the crop in your barn. (Careful! Clearing an *unripe* crop uproots it, and it's lost.)",
+    task: 'When crops are ripe (✨), harvest **every** ripe plot with one `UPDATE`.',
+    hints: {
+      nudge: 'Ripe crops have `growth >= 100`. End a day or two if nothing is ripe yet.',
+      blank: 'UPDATE plots SET crop = NULL WHERE growth >= ___;',
+      answer: 'End days until some plots show ✨, then write `UPDATE plots SET crop = NULL WHERE growth >= 100;`',
+    },
+    check: (api) => quillUses(api, 'harvested') > 0,
+    reward: { coins: 25, xp: 40 },
+  },
+
+  // ─────────────────── Free play: The Big Farm ───────────────────
+  {
+    id: 'f4-big',
+    chapter: 7.5,
+    kind: 'goal',
+    title: 'The Big Farm',
+    story:
+      "Forty-eight plots, fourteen mouths to feed, and a Quill in your hand. Time to see what this farm can *really* do.\n\n" +
+      freePlay +
+      "\n\nWith this many plots, the buttons will wear your fingers out. A handful of good `UPDATE`s each morning can run the whole farm.",
+    task: 'Run the Big Farm.',
+    goals: [
+      { label: 'Have 30 plots growing crops at once', progress: (api) => ({ have: plantedNow(api), need: 30 }) },
+      { label: 'Harvest 40 crops', progress: (api) => ({ have: since(api, (s) => s.harvested), need: 40 }) },
+      { label: 'Earn 300 coins from selling', progress: (api) => ({ have: since(api, (s) => s.earned), need: 300 }) },
+      { label: 'Every creature in a good mood (6+) at the same time', progress: (api) => ({ have: lowestMood(api), need: 6 }) },
+    ],
+    hints: {
+      nudge: 'A morning routine of a few writes does it: feed everyone, water the dry plots, harvest the ripe ones, sell, buy seeds, and plant the empty plots.',
+      blank: "Planting needs seeds first. One write can do both: `INSERT INTO orders (action, item, quantity) VALUES ('buy', 'sunpuff_seed', 10);` followed by an `UPDATE plots …` in the same run.",
+      answer:
+        "Each morning: `UPDATE creatures SET hunger = 0;` `UPDATE plots SET crop = NULL WHERE growth >= 100;` then sell what you harvested, buy seeds, and `UPDATE plots SET crop = 'sunpuff', growth = 0 WHERE crop IS NULL AND id IN (SELECT id FROM plots WHERE crop IS NULL LIMIT 10);`",
+    },
+    reward: { coins: 50, xp: 80 },
+  },
+  {
+    id: 'f4-earned',
+    chapter: 7.5,
+    kind: 'report',
+    title: 'The Mayor’s accounts',
+    story: 'Mayor Thimble wants to brag about you to the other villages, so the badger needs numbers.',
+    task: 'Answer the Mayor.',
+    question: 'In total, how many coins have all your `sell` orders brought in?',
+    expected: "SELECT COALESCE(SUM(total), 0) FROM orders WHERE action = 'sell'",
+    hints: {
+      nudge: 'Every sale is a row in `orders`, and its `total` is what it earned.',
+      blank: "SELECT SUM(total) FROM orders WHERE action = '___';",
+      answer: "Run `SELECT SUM(total) FROM orders WHERE action = 'sell';`",
+    },
+    reward: { coins: 20, xp: 30 },
+  },
+  {
+    id: 'f4-south',
+    chapter: 7.5,
+    kind: 'report',
+    title: 'Room to grow',
+    story: '"And how much room is left down south?" asks Thimble, squinting at the South field.',
+    task: 'Answer the Mayor.',
+    question: 'How many plots in the South field (row 4 or higher) are empty right now?',
+    expected: 'SELECT COUNT(*) FROM plots WHERE row >= 4 AND crop IS NULL',
+    hints: {
+      nudge: 'Empty plots have a `NULL` crop. The South field is `row >= 4`.',
+      blank: 'SELECT COUNT(*) FROM plots WHERE row >= 4 AND crop IS ___;',
+      answer: 'Run `SELECT COUNT(*) FROM plots WHERE row >= 4 AND crop IS NULL;`',
+    },
+    reward: { coins: 20, xp: 30 },
   },
 ];
 

@@ -33,6 +33,7 @@ npm run preview  # serve the built site
 | `src/data/crops.ts` | Crops and market goods |
 | `src/data/quests.ts` | Chapters and quests (add new content here) |
 | `src/sim.ts` | The night simulation |
+| `src/quill.ts` | The Ledger Quill: player writes, checked against the Ledger's laws |
 | `src/game.ts` | Game engine: actions, quests, hints, saving, rewind |
 | `src/sqlHelp.ts` | Result checking, friendly errors, read-only guard |
 | `src/ui.ts`, `src/style.css` | The interface |
