@@ -63,7 +63,7 @@ Each creature's entry starts mostly as `???`. Fields are filled in by:
 | **Puddlewump** 💧 | Medium | A walking puddle. Waters neighbours, but rots root crops if left too long. |
 | **Glimmerwick** 🕯️ | Not obvious | A candle-moth. Each night it flies off to pollinate Sunpuffs, and only Sunpuffs. |
 | **Tumblecrag** 🪨 | Medium | A rolling boulder. Tills for free, sometimes flattens fences. |
-| **Mossgrandle** 🌿 | Very hidden | Sleeps 6 days, then fertilises everything in one burst. |
+| **Mossgrandle** 🌿 | Very hidden | Snores for three nights, then on every 4th night fertilises everything within two steps in one burst. |
 | **Moolump** 🐄 | Fairly obvious | A cow-shaped grassy mound. Gives milk; becomes a hill if never moved. |
 
 ### Creatures that are SQL concepts in disguise
@@ -104,7 +104,8 @@ Each creature's entry starts mostly as `???`. Fields are filled in by:
 | 🌻 | Free play | **Lantern Night** — Sunpuff garlands; the trap of counting rows after a join. |
 | 9 | Scalar subqueries, `IN (SELECT …)`, subqueries in `FROM`, `WITH` (CTEs) | The land office: buy parcels until the farm is too big to see; the Ledger becomes your eyes. |
 | 🌻 | Free play | **The Land Rush** — own all six parcels, 300 plots growing at once. |
-| 10+ | Window functions | Seasonal trends, rankings, Mossgrandle's sleep cycle. |
+| 10 | `ROW_NUMBER`, `RANK`/`DENSE_RANK`, running totals (`SUM … OVER`), `LAG`, `PARTITION BY` | Mossgrandle's rhythm only shows up across time: `LAG` reveals it blooms every 4th night. Running totals of your fortune; the best plot in each field. |
+| 🌻 | Free play | **Record Season** — grow daily sales 3 days in a row, beat your best-ever day: a puzzle about *when* to sell. |
 
 ## The Ledger Quill (chapter 7)
 
@@ -187,7 +188,7 @@ far. There is no prescribed query and no failure state.
 
 ## Gamification
 
-- **XP and levels**: Piglet → Hog → Boss Hog → Query Swine → Truffle Hunter → Grand Grunter → Hollow Legend → Ledger Mythic → Keeper of Connections → Lord of the Land 👑
+- **XP and levels**: Piglet → Hog → Boss Hog → Query Swine → Truffle Hunter → Grand Grunter → Hollow Legend → Ledger Mythic → Keeper of Connections → Lord of the Land → Keeper of the Long View 👑
 - **Coins** from selling harvests, eggs and pebbles, plus quest rewards.
 - **Bestiary completion** as the long-term collection goal.
 - **Badges**: Hello, Ledger · Green Trotters · Critter-ologist · Frost Detective · Hollow Hand · Fair Favourite · Water Wise · Ghost Hunter · Ledger Keeper
@@ -240,6 +241,10 @@ when the tab is hidden) so a big farm stays fast.
   is always soggy: Snoutroot there loses 15 growth per night instead of growing.
 - **Echolamb**: grows Echo wool; copies the previous night's creature log rows
   as exact duplicates (new `id`s), which is what makes `DISTINCT` necessary.
+- **Mossgrandle**: never hungry. Logs `snored` most nights; on nights whose day
+  number is a multiple of 4 it logs `bloomed` and gives every crop within two steps
+  +40 growth. The night report only says "something snored" or "something let out
+  a great green sigh", so its rhythm has to be found with `LAG` over the log.
 - **Glimmerwick**: flies anywhere on the farm to the three least-grown Sunpuffs
   (+15 growth each) and logs `pollinated` with only the `plot_id`, so finding out
   what it visits takes a `JOIN` to `plots`. The night report just says "something
@@ -264,8 +269,9 @@ when the tab is hidden) so a big farm stays fast.
 
 ## Current scope
 
-- Chapters 1–9 plus six free-play interludes: 87 quests, 8 species, up to 432 plots and about 40 creatures.
-- Chapter 10 (window functions) is next.
+- Chapters 1–10 plus seven free-play interludes: 97 quests, 9 species, up to 432 plots and about 40 creatures.
+- The core SQL curriculum (SELECT through window functions) is complete. Natural next steps: Twinnet (self-joins),
+  `CASE`, string and date functions, indexes and `EXPLAIN` on the big farm, or designing a table of your own.
 
 ## Original MVP scope
 

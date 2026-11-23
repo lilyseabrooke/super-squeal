@@ -193,6 +193,9 @@ export function friendlyError(message: string, schema: SchemaInfo): string {
   if (/unrecognized token/i.test(message)) {
     return "There's a stray character Keystone doesn't recognise. Text values need matching single quotes, like `'Squeal'`.";
   }
+  if (/misuse of window function/i.test(message)) {
+    return 'Window functions (the ones with `OVER`) are worked out *after* `WHERE`, so they can’t be used in it. Compute them in a CTE or subquery first, then filter the outer query: `WITH r AS (SELECT …, ROW_NUMBER() OVER (…) AS n FROM …) SELECT … FROM r WHERE n = 1`.';
+  }
   if (/misuse of aggregate/i.test(message)) {
     return 'Aggregates like `COUNT` and `SUM` summarise many rows, so they can’t go in a `WHERE`. (You’ll meet `HAVING` for that later!)';
   }

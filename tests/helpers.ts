@@ -57,6 +57,10 @@ export const SOLVERS: Record<string, (g: Game) => void> = {
   },
   'c9-buy': (g) => quill(g, "INSERT INTO orders (action, item, quantity) VALUES ('buy', 'Mossy Hollow', 1);"),
   'c9-feed-field': (g) => quill(g, "UPDATE creatures SET hunger = 0 WHERE plot_id IN (SELECT id FROM plots WHERE field = 'Mossy Hollow');"),
+  'c10-moss-wait': (g) => {
+    g.act({ type: 'feed', name: 'Mossgrandle' }); // never hungry, so only the Feed button teaches what it eats
+    for (let i = 0; i < 12 && g.currentQuest()?.id === 'c10-moss-wait'; i++) quillFarmDay(g);
+  },
   'c8-glimmer': (g) => {
     quill(g, "UPDATE plots SET crop = 'sunpuff', growth = 0 WHERE id IN (SELECT id FROM plots WHERE crop IS NULL LIMIT 4);");
     g.endDay();
@@ -103,7 +107,7 @@ export function farmDay(g: Game, prefer: string[] = ['glassberry', 'sunpuff', 's
 export function solveReport(g: Game) {
   const q = g.currentQuest()!;
   if (q.kind !== 'report') throw new Error('not a report quest');
-  const sql = /`(SELECT[^`]+)`/i.exec(q.hints.answer ?? '')?.[1];
+  const sql = /`((?:SELECT|WITH)\s[^`]+)`/i.exec(q.hints.answer ?? '')?.[1];
   if (!sql) throw new Error(`${q.id}: final hint has no query`);
   const value = g.execResult(sql).rows[0]?.[0];
   return g.submitReport(String(value));
@@ -116,7 +120,9 @@ export function solveCurrent(g: Game): number {
   if (q.kind === 'query') g.runPlayerQuery(q.expected);
   else if (q.kind === 'answer') g.answer(q.correct);
   else if (q.kind === 'report') solveReport(g);
-  else if (q.id === 'f6-rush') {
+  else if (q.id === 'f7-records') {
+    for (let i = 0; i < 60 && g.currentQuest()?.id === q.id; i++) recordDay(g);
+  } else if (q.id === 'f6-rush') {
     for (let i = 0; i < 60 && g.currentQuest()?.id === q.id; i++) landRushDay(g);
   } else if (q.kind === 'goal') {
     for (let i = 0; i < 60 && g.currentQuest()?.id === q.id; i++) farmDay(g);
@@ -161,4 +167,41 @@ export function landRushDay(g: Game): number {
     writes++;
   }
   return writes + quillFarmDay(g);
+}
+
+/**
+ * Record Season: hold goods back and sell a little more each day than the day before,
+ * then (once the streak is done) save up for one record-breaking day.
+ */
+export function recordDay(g: Game) {
+  const q = g.currentQuest();
+  const status = q?.kind === 'goal' ? g.goalStatus(q) : [];
+  const streakDone = status.find((s) => s.label.startsWith('Grow your daily'))?.done ?? false;
+  const best = status.find((s) => s.label.startsWith('Beat your best'));
+  const yesterday = Number(g.scalar("SELECT COALESCE(SUM(total), 0) FROM orders WHERE action = 'sell' AND day = ?", [g.day - 1]));
+  const goods = g.all<{ item: string; quantity: number; price: number }>(
+    "SELECT i.item, i.quantity, m.sell_price AS price FROM inventory i JOIN market m ON m.item = i.item WHERE i.quantity > 0 ORDER BY m.sell_price",
+  );
+  const stock = goods.reduce((sum, x) => sum + x.quantity * x.price, 0);
+  // Before the streak: sell just over yesterday's total. After it: wait until one sale can beat the record.
+  const target = !streakDone ? yesterday + 20 : best && stock >= best.need ? stock : 0;
+  let sold = 0;
+  const orders: string[] = [];
+  for (const x of goods) {
+    if (sold >= target) break;
+    const n = Math.min(x.quantity, Math.ceil((target - sold) / x.price));
+    orders.push(`INSERT INTO orders (action, item, quantity) VALUES ('sell', '${x.item}', ${n});`);
+    sold += n * x.price;
+  }
+  if (orders.length && (sold > yesterday || streakDone)) quill(g, orders.join('\n'));
+  quill(g, 'UPDATE creatures SET hunger = 0 WHERE hunger > 0;');
+  if (Number(g.scalar('SELECT COUNT(*) FROM plots WHERE crop IS NOT NULL AND growth >= 100'))) quill(g, 'UPDATE plots SET crop = NULL WHERE growth >= 100;');
+  const empty = Number(g.scalar('SELECT COUNT(*) FROM plots WHERE crop IS NULL'));
+  const n = Math.min(empty, Math.floor(g.coins / 5));
+  if (n > 0) {
+    quill(g, `INSERT INTO orders (action, item, quantity) VALUES ('buy', 'sunpuff_seed', ${n});
+      UPDATE plots SET crop = 'sunpuff', growth = 0 WHERE id IN (SELECT id FROM plots WHERE crop IS NULL LIMIT ${n});`);
+  }
+  if (Number(g.scalar('SELECT COUNT(*) FROM plots WHERE crop IS NOT NULL AND moisture < 3'))) quill(g, 'UPDATE plots SET moisture = 3 WHERE crop IS NOT NULL AND moisture < 3;');
+  g.endDay();
 }

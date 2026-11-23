@@ -93,7 +93,8 @@ export const LEVELS = [
   { xp: 1050, title: 'Hollow Legend' },
   { xp: 1400, title: 'Ledger Mythic' },
   { xp: 1700, title: 'Keeper of Connections' },
-  { xp: 2100, title: 'Lord of the Land 👑' },
+  { xp: 2100, title: 'Lord of the Land' },
+  { xp: 2500, title: 'Keeper of the Long View 👑' },
 ];
 
 export const BADGES: { id: string; emoji: string; name: string; desc: string }[] = [
@@ -113,6 +114,8 @@ export const BADGES: { id: string; emoji: string; name: string; desc: string }[]
   { id: 'landowner', emoji: '🗺️', name: 'Landowner', desc: 'Bought your first parcel of land.' },
   { id: 'nesting_doll', emoji: '🪆', name: 'Nesting Doll', desc: 'Wrote your first CTE with WITH.' },
   { id: 'land_baron', emoji: '🏰', name: 'Land Baron', desc: 'Owned every parcel in the valley.' },
+  { id: 'time_traveller', emoji: '⏳', name: 'Time Traveller', desc: 'Looked back at yesterday with LAG.' },
+  { id: 'record_breaker', emoji: '🏆', name: 'Record Breaker', desc: 'Topped the Hollow’s records board.' },
 ];
 
 const HINT_COSTS = [0, 0, 2, 5];
@@ -443,6 +446,8 @@ export class Game implements QuestApi {
     if (Number(this.scalar('SELECT COUNT(*) FROM land WHERE owned = 1')) > 0) award('landowner');
     if (done('c9-cte')) award('nesting_doll');
     if (Number(this.scalar('SELECT COUNT(*) FROM land WHERE owned = 0')) === 0) award('land_baron');
+    if (done('c10-lag')) award('time_traveller');
+    if (done('f7-records')) award('record_breaker');
   }
 
   get bestiaryProgress(): { found: number; total: number } {

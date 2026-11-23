@@ -31,6 +31,10 @@ function all<T>(db: Database, sql: string, params: SqlValue[] = []): T[] {
   return out;
 }
 
+/** Mossgrandle blooms on nights whose day number is a multiple of this. */
+export const MOSS_CYCLE = 4;
+export const MOSS_BOOST = 40;
+
 const clamp = (n: number, lo = 0, hi = 10) => Math.max(lo, Math.min(hi, n));
 
 /** "Henbell", "Henbell and Clang", "Henbell, Clang and Peal". */
@@ -83,6 +87,8 @@ export function runNight(db: Database): NightReport {
   let nullkinPlot: number | null = null;
   /** Plot → the Glimmerwick pollinating it tonight. */
   const pollinated = new Map<number, string>();
+  /** Plots a blooming Mossgrandle fertilises tonight. */
+  const bloomed = new Set<number>();
 
   for (const c of creatures) {
     const working = works.get(c.id);
@@ -151,6 +157,19 @@ export function runNight(db: Database): NightReport {
       case 'Nullkin':
         nullkinPlot = c.plot_id;
         break;
+      case 'Mossgrandle': {
+        // Sleeps, and every few nights wakes to fertilise everything within two steps, all at once.
+        if (day % MOSS_CYCLE === 0) {
+          const near = plots.filter((p) => plotDistance(c.plot_id, p.id) <= 2 && p.crop && p.growth < 100);
+          for (const p of near) bloomed.add(p.id);
+          log(c.name, c.plot_id, 'bloomed', near.length);
+          note('bloomed', c.plot_id);
+        } else {
+          log(c.name, c.plot_id, 'snored', 1);
+          note('snored', c.name);
+        }
+        break;
+      }
       case 'Glimmerwick':
         // Flies anywhere on the farm to the three least-grown Sunpuffs (it only loves flowers).
         if (working) {
@@ -225,7 +244,8 @@ export function runNight(db: Database): NightReport {
         log(pollinated.get(p.id)!, p.id, 'pollinated', pollen);
         note('pollinated', p.id);
       }
-      p.growth = Math.min(100, p.growth + grow + pollen);
+      const moss = bloomed.has(p.id) ? MOSS_BOOST : 0;
+      p.growth = Math.min(100, p.growth + grow + pollen + moss);
     }
     db.run('UPDATE plots SET crop = ?, growth = ?, moisture = ?, warmth = ?, tilled = ? WHERE id = ?', [
       p.crop,
@@ -241,6 +261,8 @@ export function runNight(db: Database): NightReport {
   if (who('egg').length) lines.push(one('egg') ? `🥚 ${who('egg')[0]} laid an egg.` : `🥚 ${who('egg').length} eggs laid (${listNames(who('egg'))}).`);
   if (who('dug').length) lines.push(`🐢 ${listNames(who('dug'))} dug ${one('dug') ? 'something' : 'things'} up.`);
   if (who('watered').length) lines.push(`💧 ${listNames(who('watered'))} watered the plots around ${one('watered') ? 'it' : 'them'}.`);
+  if (who('bloomed').length) lines.push(`🌿 Something let out a great green sigh, and the crops around plot ${listNames(who('bloomed'))} shot up!`);
+  if (who('snored').length) lines.push('💤 Something snored very deeply all night.');
   if (who('pollinated').length) lines.push(`🕯️ Something glowing visited plot${one('pollinated') ? '' : 's'} ${listNames(who('pollinated'))} in the dark.`);
   if (who('fluttered').length) lines.push(`🕯️ ${listNames(who('fluttered'))} fluttered about all night, looking for something.`);
   if (who('wool').length) lines.push(`🧶 ${listNames(who('wool'))} grew ${one('wool') ? 'a bundle' : 'bundles'} of wool.`);

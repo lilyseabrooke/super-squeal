@@ -16,7 +16,12 @@ import type { ResultSet, Stats } from './types';
  */
 
 type Row = Record<string, SqlValue>;
-type Snapshot = Map<string, Map<string, Row>>;
+/** One table's rows by identity key: the raw values (for building a Row) and a signature (for cheap comparison). */
+interface TableSnapshot {
+  columns: string[];
+  rows: Map<string, { values: SqlValue[]; sig: string }>;
+}
+type Snapshot = Map<string, TableSnapshot>;
 
 /** Each table's identity column, used to match rows before and after a write. */
 const KEYS: Record<string, string> = {
@@ -58,18 +63,23 @@ export const STRUCTURE_MESSAGE =
 function snapshot(db: Database): Snapshot {
   const out: Snapshot = new Map();
   for (const [table, key] of Object.entries(KEYS)) {
-    const rows = new Map<string, Row>();
-    const st = db.prepare(`SELECT rowid AS __rowid, * FROM ${table}`);
-    while (st.step()) {
-      const r = st.getAsObject() as Row;
-      const id = String(key === 'rowid' ? r.__rowid : r[key]);
-      delete r.__rowid;
-      rows.set(id, r);
+    const res = db.exec(`SELECT rowid AS __rowid, * FROM ${table}`)[0];
+    const allColumns = res?.columns ?? ['__rowid'];
+    const keyIndex = key === 'rowid' ? 0 : allColumns.indexOf(key);
+    const rows = new Map<string, { values: SqlValue[]; sig: string }>();
+    for (const r of res?.values ?? []) {
+      const values = r.slice(1);
+      rows.set(String(r[keyIndex]), { values, sig: JSON.stringify(values) });
     }
-    st.free();
-    out.set(table, rows);
+    out.set(table, { columns: allColumns.slice(1), rows });
   }
   return out;
+}
+
+function toRow(columns: string[], values: SqlValue[]): Row {
+  const row: Row = {};
+  columns.forEach((c, i) => (row[c] = values[i]));
+  return row;
 }
 
 interface TableDiff {
@@ -84,15 +94,18 @@ function diff(before: Snapshot, after: Snapshot): Map<string, TableDiff> {
     const b = before.get(table)!;
     const a = after.get(table)!;
     const d: TableDiff = { inserted: [], deleted: [], updated: [] };
-    for (const [id, row] of a) {
-      const old = b.get(id);
-      if (!old) d.inserted.push(row);
-      else {
-        const changed = Object.keys(row).filter((k) => row[k] !== old[k]);
-        if (changed.length) d.updated.push({ before: old, after: row, changed });
+    // Compare signatures first; only build full rows for the few that changed.
+    for (const [id, row] of a.rows) {
+      const old = b.rows.get(id);
+      if (!old) d.inserted.push(toRow(a.columns, row.values));
+      else if (old.sig !== row.sig) {
+        const beforeRow = toRow(b.columns, old.values);
+        const afterRow = toRow(a.columns, row.values);
+        const changed = a.columns.filter((c) => afterRow[c] !== beforeRow[c]);
+        d.updated.push({ before: beforeRow, after: afterRow, changed });
       }
     }
-    for (const [id, row] of b) if (!a.has(id)) d.deleted.push(row);
+    for (const [id, row] of b.rows) if (!a.rows.has(id)) d.deleted.push(toRow(b.columns, row.values));
     out.set(table, d);
   }
   return out;

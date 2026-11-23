@@ -28,10 +28,10 @@ describe('full playthrough', () => {
       expect(days, `${id} took ${days} days`).toBeGreaterThanOrEqual(3);
       expect(days, `${id} took ${days} days`).toBeLessThanOrEqual(20);
     }
-    for (const b of ['frost_detective', 'hollow_hand', 'fair_favourite', 'water_wise', 'ghost_hunter', 'ledger_keeper', 'quill_bearer', 'big_farmer', 'matchmaker', 'lantern_bearer']) {
+    for (const b of ['frost_detective', 'hollow_hand', 'fair_favourite', 'water_wise', 'ghost_hunter', 'ledger_keeper', 'quill_bearer', 'big_farmer', 'matchmaker', 'lantern_bearer', 'landowner', 'nesting_doll', 'land_baron', 'time_traveller', 'record_breaker']) {
       expect(g.progress.badges).toContain(b);
     }
-    expect(g.progress.met).toEqual(['Squeal', 'Henbell', 'Sortoise', 'Chimnius', 'Puddlewump', 'Nullkin', 'Echolamb', 'Glimmerwick']);
+    expect(g.progress.met).toEqual(['Squeal', 'Henbell', 'Sortoise', 'Chimnius', 'Puddlewump', 'Nullkin', 'Echolamb', 'Glimmerwick', 'Mossgrandle']);
     expect(g.bestiaryProgress.found).toBe(g.bestiaryProgress.total);
   });
 
@@ -50,6 +50,7 @@ describe('full playthrough', () => {
         'SELECT COUNT(*) FROM (SELECT day, source, plot_id, event FROM farm_log GROUP BY day, source, plot_id, event HAVING COUNT(*) > 1)',
       'c7-laws': 'SELECT COUNT(*) FROM farm WHERE coins < 9999',
       // Every pollinated plot holds a Sunpuff, and something else was growing that it skipped.
+      'c10-moss-why': `SELECT MIN(gap) = 4 AND MAX(gap) = 4 FROM (SELECT day - LAG(day) OVER (ORDER BY day) AS gap FROM (SELECT DISTINCT day FROM farm_log WHERE event = 'bloomed')) WHERE gap IS NOT NULL`,
       'c8-pollen': `SELECT (SELECT COUNT(*) FROM farm_log l JOIN plots p ON l.plot_id = p.id WHERE l.event = 'pollinated' AND p.crop != 'sunpuff') = 0
                       AND (SELECT COUNT(*) FROM plots WHERE crop IN ('snoutroot', 'glassberry')) > 0`,
     };
@@ -325,5 +326,80 @@ describe('v4 upgrade of a chapter 7 farm', () => {
     const g2 = await newGame(kv);
     const counts = Object.fromEntries(g2.all<{ field: string; n: number }>('SELECT field, COUNT(*) AS n FROM plots GROUP BY field').map((r) => [r.field, r.n]));
     expect(counts).toEqual({ 'East field': 12, 'Home field': 12, 'South field': 24 });
+  });
+});
+
+describe('chapter 10', () => {
+  async function withMoss() {
+    const g = await newGame();
+    g.db.run("INSERT INTO creatures (name, kind, emoji, plot_id, hunger, mood) VALUES ('Mossgrandle', 'moss-sleeper', '🌿', 11, 0, 7)");
+    g.db.run("UPDATE plots SET crop = 'glassberry', growth = 0"); // every plot
+    return g;
+  }
+
+  it('Mossgrandle snores, then every 4th night boosts crops within two steps by 40', async () => {
+    const g = await withMoss();
+    const growthOn = () => new Map(g.all<{ id: number; growth: number }>('SELECT id, growth FROM plots').map((p) => [p.id, p.growth]));
+    for (let night = 1; night <= 8; night++) {
+      g.db.run('UPDATE plots SET growth = 0'); // fresh crops each night, so a boost always has room to show
+      const before = growthOn();
+      const day = g.day;
+      g.endDay();
+      const after = growthOn();
+      const bloomed = Number(g.scalar("SELECT COUNT(*) FROM farm_log WHERE source = 'Mossgrandle' AND event = 'bloomed' AND day = ?", [day]));
+      expect(bloomed, `night ${day}`).toBe(day % 4 === 0 ? 1 : 0);
+      if (day % 4 === 0) {
+        for (const [id, g1] of after) {
+          const d = g.plotDistance(11, id);
+          const boost = g1 - before.get(id)!;
+          if (d <= 2) expect(boost, `plot ${id} near the moss`).toBeGreaterThanOrEqual(40);
+          if (d > 2) expect(boost, `plot ${id} far from the moss`).toBeLessThan(40);
+        }
+      }
+    }
+    expect(Number(g.scalar("SELECT hunger FROM creatures WHERE name = 'Mossgrandle'"))).toBe(0);
+    expect(Number(g.scalar("SELECT COUNT(*) FROM farm_log WHERE source = 'Mossgrandle' AND event = 'snored'"))).toBe(6);
+  });
+
+  it('a window function in WHERE gets a "use a CTE" explanation', async () => {
+    const g = await newGame();
+    const out = g.runPlayerQuery('SELECT id FROM plots WHERE ROW_NUMBER() OVER (ORDER BY growth) = 1');
+    expect(out.error).toMatch(/after\* `WHERE`.*WITH r AS/);
+  });
+});
+
+describe('Record Season goals', () => {
+  async function atRecords() {
+    const g = await newGame();
+    while (g.currentQuest()?.id !== 'f7-records') solveCurrent(g);
+    const q = g.currentQuest()!;
+    if (q.kind !== 'goal') throw new Error('expected a goal quest');
+    const goal = (prefix: string) => g.goalStatus(q).find((x) => x.label.startsWith(prefix))!;
+    return { g, goal };
+  }
+  const sale = (g: Awaited<ReturnType<typeof newGame>>, day: number, total: number) =>
+    g.db.run("INSERT INTO orders (day, action, item, quantity, total) VALUES (?, 'sell', 'egg', 1, ?)", [day, total]);
+
+  it('counts the longest run of days whose sales beat the day before', async () => {
+    const { g, goal } = await atRecords();
+    const d = g.day;
+    g.db.run("DELETE FROM orders WHERE action = 'sell' AND day >= ?", [d - 1]);
+    sale(g, d - 1, 100);
+    sale(g, d, 50); // dip
+    expect(goal('Grow').have).toBe(0);
+    g.db.run('UPDATE farm SET day = ?', [d + 3]);
+    sale(g, d + 1, 60);
+    sale(g, d + 2, 70);
+    sale(g, d + 3, 65); // run of 2 then a dip
+    expect(goal('Grow').have).toBe(2);
+  });
+
+  it('needs a single day above the best day before the season started', async () => {
+    const { g, goal } = await atRecords();
+    const before = goal('Beat').need - 1;
+    sale(g, g.day, before);
+    expect(goal('Beat').done).toBe(false);
+    sale(g, g.day, 1);
+    expect(goal('Beat').done).toBe(true);
   });
 });

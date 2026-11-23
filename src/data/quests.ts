@@ -18,6 +18,8 @@ export const CHAPTERS: Chapter[] = [
   { n: 8.5, title: 'Lantern Night', concept: 'Free play', free: true },
   { n: 9, title: 'Land and Plenty', concept: 'Subqueries & CTEs' },
   { n: 9.5, title: 'The Land Rush', concept: 'Free play', free: true },
+  { n: 10, title: 'The Long View', concept: 'Window functions' },
+  { n: 10.5, title: 'Record Season', concept: 'Free play', free: true },
 ];
 
 function arrive(api: QuestApi, name: string, plot: number, hunger: number, mood: number): string {
@@ -40,6 +42,32 @@ const hungerOf = (api: QuestApi, name: string) => Number(api.scalar('SELECT hung
 const where = { pattern: /\bwhere\b/i, message: 'Use `WHERE` to filter the rows for this one.' };
 const join = { pattern: /\bjoin\b/i, message: 'Use `JOIN … ON` to connect the two tables.' };
 const subquery = { pattern: /\(\s*select\b/i, message: 'Put a whole `SELECT` inside brackets: that’s a subquery.' };
+const over = { pattern: /\bover\s*\(/i, message: 'Use a window function, with `OVER ( … )`, for this one.' };
+/** Daily coins from selling, the history most of chapter 10 looks across. */
+const DAILY = "WITH daily AS (SELECT day, SUM(total) AS earned FROM orders WHERE action = 'sell' GROUP BY day)";
+
+/** Coins from sell orders on each day in [from, to]; days with no sales count as 0. */
+function dailySales(api: QuestApi, from: number, to: number): number[] {
+  const out: number[] = [];
+  for (let d = from; d <= to; d++) out.push(Number(api.scalar("SELECT COALESCE(SUM(total), 0) FROM orders WHERE action = 'sell' AND day = ?", [d])));
+  return out;
+}
+
+/** Longest run of days (since the quest began) on which sales beat the day before. */
+function longestRise(api: QuestApi): number {
+  const start = api.progress.questStart.day;
+  const sales = dailySales(api, start - 1, api.day);
+  let best = 0;
+  let run = 0;
+  for (let i = 1; i < sales.length; i++) {
+    run = sales[i] > sales[i - 1] ? run + 1 : 0;
+    best = Math.max(best, run);
+  }
+  return best;
+}
+const bloomDaysSince = (api: QuestApi, day: number) =>
+  Number(api.scalar("SELECT COUNT(DISTINCT day) FROM farm_log WHERE event = 'bloomed' AND day >= ?", [day]));
+
 const groupBy = { pattern: /\bgroup\s+by\b/i, message: 'Use `GROUP BY` to make one row per group.' };
 const isNull = { pattern: /\bis\s+(not\s+)?null\b/i, message: 'Use `IS NULL` (or `IS NOT NULL`) to test for missing values.' };
 const distinct = { pattern: /\bdistinct\b/i, message: 'Use `DISTINCT` to remove the repeats.' };
@@ -1689,6 +1717,221 @@ export const QUESTS: Quest[] = [
       answer: 'Run `SELECT COUNT(*) FROM creatures WHERE plot_id IN (SELECT id FROM plots WHERE crop IS NULL);`',
     },
     reward: { coins: 25, xp: 40 },
+  },
+  // ─────────────── Chapter 10: window functions ───────────────
+  {
+    id: 'c10-number',
+    chapter: 10,
+    kind: 'query',
+    title: 'Something under the moss',
+    onStart: (api) => arrive(api, 'Mossgrandle', 11, 0, 7),
+    story:
+      "A huge, ancient lump of moss has settled on plot 11. It has a face somewhere in there, I think. It hasn't moved, and it snores. The townsfolk call it a **Mossgrandle**, and say it's the oldest thing in the Hollow.\n\nThat makes me think about time. Your Ledger now holds weeks of history, and **window functions** let one row look at the rows around it: numbering them, ranking them, keeping running totals, comparing with yesterday. Let's start simple.",
+    task: 'Show every parcel in `land` with its `name`, `price` and a number `n` counting from 1, cheapest first.',
+    concept: {
+      title: 'Window functions: … OVER ( … )',
+      body: 'A **window function** calculates something for each row using a "window" of other rows, *without* squashing them together like `GROUP BY` does. `ROW_NUMBER() OVER (ORDER BY x)` numbers the rows 1, 2, 3… in order of `x`.',
+      example: 'SELECT item, sell_price, ROW_NUMBER() OVER (ORDER BY sell_price DESC) AS n FROM market;',
+    },
+    hints: {
+      nudge: 'Add `ROW_NUMBER() OVER (ORDER BY price) AS n` to your list of columns.',
+      blank: 'SELECT name, price, ROW_NUMBER() OVER (ORDER BY ___) AS n FROM land;',
+    },
+    expected: 'SELECT name, price, ROW_NUMBER() OVER (ORDER BY price) AS n FROM land',
+    mustInclude: [over],
+    reward: { coins: 20, xp: 30 },
+  },
+  {
+    id: 'c10-rank',
+    chapter: 10,
+    kind: 'query',
+    title: 'Ties for first place',
+    story:
+      "`ROW_NUMBER` always counts 1, 2, 3, even when two rows are tied. That isn't fair in a contest! `RANK` gives tied rows the *same* rank, then skips ahead. Your barn has lots of ties: plenty of items sit at zero.",
+    task: 'Rank the items in `inventory` by `quantity`, biggest first, using `RANK()`. Show `item`, `quantity` and the rank.',
+    concept: {
+      title: 'RANK and DENSE_RANK',
+      body: '`RANK() OVER (ORDER BY x DESC)` gives ties the same rank and then skips (1, 1, 3). `DENSE_RANK()` doesn’t skip (1, 1, 2). `ROW_NUMBER()` never ties (1, 2, 3).',
+      example: 'SELECT name, mood, RANK() OVER (ORDER BY mood DESC) FROM creatures;',
+    },
+    hints: {
+      nudge: 'Use `RANK() OVER (ORDER BY quantity DESC)`.',
+      blank: 'SELECT item, quantity, RANK() OVER (ORDER BY quantity ___) FROM inventory;',
+    },
+    expected: 'SELECT item, quantity, RANK() OVER (ORDER BY quantity DESC) FROM inventory',
+    mustInclude: [over, { pattern: /\brank\s*\(/i, message: 'Use `RANK()` here, so ties share a place.' }],
+    reward: { coins: 20, xp: 30 },
+  },
+  {
+    id: 'c10-running',
+    chapter: 10,
+    kind: 'query',
+    title: 'The money mountain',
+    story:
+      "Every sale you've made is in `orders`. Let's watch your fortune grow, day by day.\n\nWith `ORDER BY` inside the `OVER`, `SUM` stops being one big total and becomes a **running total**: each row adds up everything up to and including itself.",
+    task:
+      "Using the CTE `daily` (each `day`'s coins from `'sell'` orders, as `earned`), show each `day`, its `earned`, and a running total called `running`.",
+    concept: {
+      title: 'Running totals: SUM(…) OVER (ORDER BY …)',
+      body: '`SUM(x) OVER (ORDER BY day)` adds up `x` for every row from the first day up to the current one. `AVG`, `COUNT`, `MIN` and `MAX` work the same way.',
+      example: 'SELECT day, temperature, AVG(temperature) OVER (ORDER BY day) AS avg_so_far FROM weather WHERE day <= 10;',
+    },
+    hints: {
+      nudge: `Start with: ${'`'}${DAILY}${'`'}, then select from \`daily\` with \`SUM(earned) OVER (ORDER BY day)\`.`,
+      blank: `${DAILY} SELECT day, earned, SUM(earned) OVER (ORDER BY ___) AS running FROM daily;`,
+    },
+    expected: `${DAILY} SELECT day, earned, SUM(earned) OVER (ORDER BY day) AS running FROM daily`,
+    mustInclude: [over],
+    reward: { coins: 25, xp: 35 },
+  },
+  {
+    id: 'c10-lag',
+    chapter: 10,
+    kind: 'query',
+    title: 'Better than yesterday?',
+    story:
+      "Was today a better day than yesterday? To answer that, each row needs to peek at the row *before* it. That's exactly what `LAG` does.",
+    task: "Using the same `daily` CTE, show each `day`, its `earned`, and the `change` from the previous selling day (`earned` minus the previous day's `earned`).",
+    concept: {
+      title: 'LAG and LEAD',
+      body: '`LAG(x) OVER (ORDER BY day)` is the value of `x` on the *previous* row; `LEAD(x)` is the *next* row. The first row has no previous one, so its `LAG` is `NULL`.',
+      example: 'SELECT day, temperature, temperature - LAG(temperature) OVER (ORDER BY day) AS change FROM weather WHERE day <= 10;',
+    },
+    hints: {
+      nudge: 'Subtract `LAG(earned) OVER (ORDER BY day)` from `earned`.',
+      blank: `${DAILY} SELECT day, earned, earned - ___(earned) OVER (ORDER BY day) AS change FROM daily;`,
+    },
+    expected: `${DAILY} SELECT day, earned, earned - LAG(earned) OVER (ORDER BY day) AS change FROM daily`,
+    mustInclude: [over, { pattern: /\blag\s*\(/i, message: 'Use `LAG(earned)` to peek at the previous day.' }],
+    reward: { coins: 25, xp: 35 },
+  },
+  {
+    id: 'c10-best',
+    chapter: 10,
+    kind: 'query',
+    title: 'The best plot in every field',
+    story:
+      "Mayor Thimble is giving a rosette to the best plot in **each** field. `PARTITION BY` restarts the window for every group, so numbering starts again at 1 in each field. Then keep just the 1s.\n\nOne catch: window functions are worked out *after* `WHERE`, so you can't filter on them directly. Wrap them in a CTE first.",
+    task:
+      'For each `field`, show the plot with the highest `growth` (`field`, `id`, `growth`). Break ties by the lowest `id`.',
+    concept: {
+      title: 'PARTITION BY',
+      body: '`ROW_NUMBER() OVER (PARTITION BY field ORDER BY growth DESC)` numbers rows separately within each field. Keep `n = 1` in an outer query to get the top row per group.',
+      example: 'SELECT name, kind, ROW_NUMBER() OVER (PARTITION BY kind ORDER BY name) AS n FROM creatures;',
+    },
+    hints: {
+      nudge: 'In a CTE, number plots `PARTITION BY field ORDER BY growth DESC, id`. Then keep rows `WHERE n = 1`.',
+      blank:
+        'WITH r AS (SELECT field, id, growth, ROW_NUMBER() OVER (PARTITION BY ___ ORDER BY growth DESC, id) AS n FROM plots) SELECT field, id, growth FROM r WHERE n = 1;',
+    },
+    expected:
+      'WITH r AS (SELECT field, id, growth, ROW_NUMBER() OVER (PARTITION BY field ORDER BY growth DESC, id) AS n FROM plots) SELECT field, id, growth FROM r WHERE n = 1',
+    mustInclude: [over, { pattern: /\bpartition\s+by\b/i, message: 'Use `PARTITION BY field` so the numbering restarts in each field.' }],
+    reward: { coins: 30, xp: 40 },
+  },
+  {
+    id: 'c10-moss-wait',
+    chapter: 10,
+    kind: 'action',
+    title: 'Watching the moss',
+    story:
+      "That Mossgrandle has done nothing but snore. But last night I could have sworn I heard a great green *sigh*… Let's keep farming and keep an eye on the log. One night won't tell us much. We need to see it happen **twice**.",
+    task: "Keep farming (ending days) until Mossgrandle's `'bloomed'` event has happened on **two** different days.",
+    hints: {
+      nudge: "Check with `SELECT day, amount FROM farm_log WHERE event = 'bloomed';` each morning.",
+      blank: 'Keep your morning routine going and press 🌙 End day. It may take several nights.',
+      answer: "End days (feeding everyone as usual) until `SELECT COUNT(DISTINCT day) FROM farm_log WHERE event = 'bloomed';` shows 2.",
+    },
+    check: (api) => bloomDaysSince(api, 0) >= 2,
+    reward: { coins: 15, xp: 20 },
+  },
+  {
+    id: 'c10-moss-why',
+    chapter: 10,
+    kind: 'answer',
+    title: 'The rhythm of the moss',
+    story:
+      "There it is: the Mossgrandle *does* wake up. But how often? With `LAG` you can put each bloom next to the one before it, and see the gap. (Use `DISTINCT` days. Echolamb copies the log, remember!)",
+    task: '**How often does Mossgrandle bloom?**',
+    hints: {
+      nudge: "Take the distinct days with a `'bloomed'` event, and subtract `LAG(day)` from each one.",
+      blank: "SELECT day, day - LAG(day) OVER (ORDER BY day) AS gap FROM (SELECT DISTINCT day FROM farm_log WHERE event = '___');",
+      answer:
+        "Run `SELECT day, day - LAG(day) OVER (ORDER BY day) AS gap FROM (SELECT DISTINCT day FROM farm_log WHERE event = 'bloomed');`. The gap is always 4.",
+    },
+    choices: ['Every night, but you only notice sometimes', 'Every 4th night, regular as clockwork', 'Only on nights when it rains'],
+    correct: 1,
+    discovers: ['moss_bloom', 'moss_sleep'],
+    reward: { coins: 25, xp: 40 },
+  },
+
+  // ─────────────────── Free play: Record Season ───────────────────
+  {
+    id: 'f7-records',
+    chapter: 10.5,
+    kind: 'goal',
+    title: 'Record Season',
+    story:
+      "The Hollow's merchants keep a **records board**, and Mayor Thimble wants your name at the top. This one isn't about *how much* you grow. It's about *when* you sell. Your barn can hold goods back for a better day…\n\n" +
+      freePlay +
+      "\n\nYour running-total and `LAG` queries from this chapter will show you exactly how each day compares.",
+    task: 'Set the records.',
+    goals: [
+      { label: 'Grow your daily sales 3 days in a row', progress: (api) => ({ have: longestRise(api), need: 3 }) },
+      {
+        label: 'Beat your best-ever day of sales',
+        progress: (api) => {
+          const start = api.progress.questStart.day;
+          const before = Number(api.scalar("SELECT COALESCE(MAX(t), 0) FROM (SELECT SUM(total) AS t FROM orders WHERE action = 'sell' AND day < ? GROUP BY day)", [start]));
+          const since = Math.max(0, ...dailySales(api, start, api.day));
+          return { have: since, need: before + 1 };
+        },
+      },
+      { label: 'See Mossgrandle bloom twice more', progress: (api) => ({ have: bloomDaysSince(api, api.progress.questStart.day), need: 2 }) },
+      { label: 'Every creature in a good mood (6+) at the same time', progress: (api) => ({ have: lowestMood(api), need: 6 }) },
+    ],
+    hints: {
+      nudge: "You don't have to sell everything at once. Keep some goods back, and sell a little more each day than the day before.",
+      blank: `See how each day compares: ${'`'}${DAILY} SELECT day, earned, earned - LAG(earned) OVER (ORDER BY day) AS change FROM daily;${'`'}`,
+      answer:
+        "Stop selling for a day or two to build up stock. Then sell a bit more each day than the day before (check yesterday's total with the `LAG` query). For the record day, save up and sell everything at once.",
+    },
+    reward: { coins: 100, xp: 100 },
+  },
+  {
+    id: 'f7-jump',
+    chapter: 10.5,
+    kind: 'report',
+    title: 'The records board',
+    story: 'The records clerk, a very precise owl, wants one more line for the board.',
+    task: 'Answer the clerk.',
+    question: 'What is the **biggest increase** in sales from one selling day to the next, in coins?',
+    expected: `${DAILY}, c AS (SELECT earned - LAG(earned) OVER (ORDER BY day) AS change FROM daily) SELECT MAX(change) FROM c`,
+    hints: {
+      nudge: 'Work out each day’s change with `LAG`, then take the `MAX` of those changes.',
+      blank: `${DAILY}, c AS (SELECT earned - LAG(earned) OVER (ORDER BY day) AS change FROM daily) SELECT ___(change) FROM c;`,
+      answer: `Run ${'`'}${DAILY}, c AS (SELECT earned - LAG(earned) OVER (ORDER BY day) AS change FROM daily) SELECT MAX(change) FROM c;${'`'}`,
+    },
+    reward: { coins: 30, xp: 40 },
+  },
+  {
+    id: 'f7-second',
+    chapter: 10.5,
+    kind: 'report',
+    title: 'The silver medal',
+    story: '"Everyone remembers first place," hoots the owl. "I like to honour second."',
+    task: 'Answer the clerk.',
+    question: 'Which `kind` of creature is **second** most common on your farm? (Type the kind, like `bell-fowl`.)',
+    expected:
+      'WITH k AS (SELECT kind, COUNT(*) AS n FROM creatures GROUP BY kind), r AS (SELECT kind, DENSE_RANK() OVER (ORDER BY n DESC) AS place FROM k) SELECT kind FROM r WHERE place = 2',
+    hints: {
+      nudge: 'Count creatures per kind, then rank the kinds by that count with `DENSE_RANK()` and keep rank 2.',
+      blank:
+        'WITH k AS (SELECT kind, COUNT(*) AS n FROM creatures GROUP BY kind), r AS (SELECT kind, DENSE_RANK() OVER (ORDER BY n DESC) AS place FROM k) SELECT kind FROM r WHERE place = ___;',
+      answer:
+        'Run `WITH k AS (SELECT kind, COUNT(*) AS n FROM creatures GROUP BY kind), r AS (SELECT kind, DENSE_RANK() OVER (ORDER BY n DESC) AS place FROM k) SELECT kind FROM r WHERE place = 2;`',
+    },
+    reward: { coins: 30, xp: 40 },
   },
 ];
 

@@ -12,7 +12,11 @@ import { newGame, solveCurrent } from './helpers';
 
 /** Complete queries quoted in hint text (a fragment like `SELECT *`, or a sketch with "…" in it, isn't one). */
 const codeSpans = (text: string) =>
-  [...text.matchAll(/`([^`]+)`/g)].map((m) => m[1]).filter((c) => /^(SELECT|WITH)\s.+\bFROM\b/i.test(c) && !c.includes('…'));
+  [...text.matchAll(/`([^`]+)`/g)]
+    .map((m) => m[1])
+    .filter((c) => /^(SELECT|WITH)\s.+\bFROM\b/i.test(c) && !c.includes('…'))
+    // A CTE on its own (`WITH x AS (…)`) is a building block; only run it when a SELECT follows.
+    .filter((c) => !/^WITH\b/i.test(c) || /\)\s*SELECT\b/i.test(c));
 
 /** Turns "SELECT ___ FROM ___;" into a regex that matches any way of filling the blanks. */
 function templateRegex(template: string): RegExp {

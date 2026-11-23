@@ -117,6 +117,19 @@ export const SPECIES: Record<string, Species> = {
       { id: 'glimmer_flowers', label: 'Picky', value: 'Only visits flowers. It ignores Snoutroot and Glassberry completely', discover: 'quest' },
     ],
   },
+  Mossgrandle: {
+    name: 'Mossgrandle',
+    emoji: '🌿',
+    kind: 'moss-sleeper',
+    food: 'old leaves',
+    blurb: 'A huge, ancient lump of moss with a face somewhere in it. It has not moved since it arrived. It may never move again. It snores.',
+    ethereal: true,
+    traits: [
+      { id: 'moss_eats', label: 'Eats', value: 'Old leaves (but it never seems hungry)', discover: 'feed' },
+      { id: 'moss_bloom', label: 'Night work', value: 'Every 4th night it wakes and fertilises every crop within two steps (+40 growth) in one burst', discover: 'quest' },
+      { id: 'moss_sleep', label: 'The rest of the time', value: 'Sleeps. Deeply. Its log is mostly snoring', discover: 'quest' },
+    ],
+  },
 };
 
 const BY_KIND = new Map(Object.values(SPECIES).map((s) => [s.kind, s]));
@@ -130,6 +143,6 @@ export function speciesOf(c: { kind?: string | null; name?: string | null }): Sp
 }
 
 /** Creatures planned for later chapters, shown as silhouettes in the Bestiary. */
-export const COMING_SOON = ['Tumblecrag', 'Mossgrandle', 'Moolump', 'Twinnet'];
+export const COMING_SOON = ['Tumblecrag', 'Moolump', 'Twinnet'];
 
 export const ALL_TRAIT_IDS = Object.values(SPECIES).flatMap((s) => s.traits.map((t) => t.id));
