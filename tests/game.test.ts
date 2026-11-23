@@ -1,21 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { memoryKV, type Action, type Game } from '../src/game';
+import { memoryKV, type Action } from '../src/game';
 import { QUESTS } from '../src/data/quests';
 import { plotDistance } from '../src/data/schema';
-import { newGame } from './helpers';
+import { newGame, SOLVERS } from './helpers';
 
-/** Does whatever a sensible player would do for each action quest. */
-const SOLVERS: Record<string, (g: Game) => void> = {
-  'c1-feed': (g) => g.act({ type: 'feed', name: 'Squeal' }),
-  'c1-plant': (g) => g.act({ type: 'plant', plot: 6, crop: 'snoutroot' }),
-  'c1-night': (g) => g.endDay(),
-  'c2-feed': (g) => g.act({ type: 'feed', name: 'Henbell' }),
-  'c2-night': (g) => g.endDay(),
-  'c3-sell': (g) => g.act({ type: 'sell', item: 'egg', all: false }),
-  'c3-night': (g) => g.endDay(),
-  'c4-frost': (g) => g.endDay(),
-  'c4-move': (g) => g.act({ type: 'move', name: 'Henbell', plot: 12 }),
-};
 
 describe('full playthrough', () => {
   it('every quest can be completed in order', async () => {

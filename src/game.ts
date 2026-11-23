@@ -4,7 +4,18 @@ import { ALL_TRAIT_IDS, SPECIES } from './data/creatures';
 import { QUESTS } from './data/quests';
 import { schemaSql } from './data/schema';
 import { runNight } from './sim';
-import { friendlyError, isReadOnly, READONLY_MESSAGE, resultsMatch, stripComments, type SchemaInfo } from './sqlHelp';
+import {
+  BLANK,
+  BLANKS_MESSAGE,
+  friendlyError,
+  isReadOnly,
+  READONLY_MESSAGE,
+  resultsMatch,
+  sameQuery,
+  stripComments,
+  tablesIn,
+  type SchemaInfo,
+} from './sqlHelp';
 import type { NightReport, Progress, Quest, QuestApi, ResultSet } from './types';
 
 export const SAVE_KEY = 'super-squeal-save-v1';
@@ -367,6 +378,7 @@ export class Game implements QuestApi {
   runPlayerQuery(sql: string): QueryOutcome {
     if (!stripComments(sql).trim()) return { error: 'Type a query into the Ledger first!' };
     if (!this.progress.quill && !isReadOnly(sql)) return { error: READONLY_MESSAGE };
+    if (sql.includes(BLANK)) return { error: BLANKS_MESSAGE };
 
     let result: ResultSet;
     try {
@@ -389,11 +401,25 @@ export class Game implements QuestApi {
       } else if (match.ok && missing) {
         feedback = { ok: false, message: `Right answer, but this quest is practising something specific. ${missing.message}` };
       } else {
-        feedback = { ok: false, message: match.reason ?? 'Not quite what Keystone is after.' };
+        feedback = { ok: false, message: this.explainMismatch(q, sql, match.reason) };
       }
     }
     this.afterChange();
     return { result, feedback };
+  }
+
+  /** Says *why* a query isn't what the quest wants, in the most useful terms available. */
+  private explainMismatch(q: Quest & { kind: 'query' }, sql: string, reason?: string): string {
+    const want = tablesIn(q.expected);
+    const got = tablesIn(sql);
+    if (q.concept?.example && sameQuery(sql, q.concept.example)) {
+      return `That's the example from the spell card. It shows how **${q.concept.title}** works using a different table, so it isn't the answer. Now use the same idea for your task: ${q.task}`;
+    }
+    if (want.length && !want.every((t) => got.includes(t))) {
+      const from = got.length ? `reads from \`${got.join('`, `')}\`` : "doesn't read from any table";
+      return `This quest is about the \`${want[0]}\` table, but your query ${from}. Try \`FROM ${want[0]}\`.`;
+    }
+    return reason ?? 'Not quite what Keystone is after.';
   }
 
   answer(choice: number): boolean {

@@ -4,6 +4,7 @@ import { COMING_SOON, SPECIES } from './data/creatures';
 import { chapterOf, QUESTS } from './data/quests';
 import { PLOT_COUNT, PLOT_COLS } from './data/schema';
 import { BADGES, type Action, type Game, type QueryOutcome, type Toast } from './game';
+import { isSqlTemplate } from './sqlHelp';
 
 // ───────────── tiny helpers ─────────────
 
@@ -275,7 +276,7 @@ export function mountUI(root: HTMLElement, game: Game) {
     const cost = game.nextHintCost(q.id);
     const answerText = q.hints.answer ?? (q.kind === 'query' ? `\`${q.expected};\`` : '');
     const blankCode = q.hints.blank;
-    const isCode = /^(SELECT|WITH)\b/i.test(blankCode);
+    const isCode = isSqlTemplate(blankCode);
 
     const hints: string[] = [];
     if (level >= 1) hints.push(`<li>💡 ${md(q.hints.nudge)}</li>`);
@@ -321,7 +322,7 @@ export function mountUI(root: HTMLElement, game: Game) {
         q.concept
           ? `<details class="concept" open><summary>📘 New spell: <strong>${esc(q.concept.title)}</strong></summary>
               <p>${md(q.concept.body)}</p>
-              ${q.concept.example ? `<pre><code>${esc(q.concept.example)}</code></pre>` : ''}</details>`
+              ${q.concept.example ? `<p class="small muted">Example (it uses a different table on purpose, so it's not the answer):</p><pre><code>${esc(q.concept.example)}</code></pre>` : ''}</details>`
           : ''
       }
       ${interaction}

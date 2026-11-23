@@ -12,6 +12,27 @@ export function stripComments(sql: string): string {
   return sql.replace(/--[^\n]*/g, ' ').replace(/\/\*[\s\S]*?\*\//g, ' ');
 }
 
+/** Tables a query reads from (FROM / JOIN targets), lowercased. */
+export function tablesIn(sql: string): string[] {
+  const found = new Set<string>();
+  for (const m of stripLiterals(sql).matchAll(/\b(?:from|join)\s+["`[]?(\w+)/gi)) found.add(m[1].toLowerCase());
+  return [...found];
+}
+
+/** Whitespace- and case-insensitive comparison of two queries, ignoring trailing semicolons. */
+export function sameQuery(a: string, b: string): boolean {
+  const norm = (s: string) => stripComments(s).replace(/;\s*$/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  return norm(a) === norm(b);
+}
+
+/** True for hint text that is a SQL template (vs. plain instructions like "With a plot selected…"). */
+export function isSqlTemplate(s: string): boolean {
+  return /^(SELECT|WITH)\s/.test(s.trim());
+}
+
+export const BLANK = '___';
+export const BLANKS_MESSAGE = 'Replace each `___` blank with the right word before running. The blanks are the bits you fill in!';
+
 const WRITE_WORDS = /\b(insert|update|delete|drop|create|alter|attach|detach|vacuum|pragma|reindex|begin|commit|rollback|savepoint|release)\b/i;
 
 /** True if every statement only reads (SELECT / WITH ... SELECT). */
@@ -81,7 +102,10 @@ export function resultsMatch(player: ResultSet, expected: ResultSet, ordered: bo
       if (n > 0) eCount.set(x, n - 1);
       else wrong++;
     }
-    return { ok: false, reason: `Right number of rows, but ${wrong} of them ${wrong === 1 ? "isn't" : "aren't"} what Keystone expected.` };
+    return {
+      ok: false,
+      reason: `Right number of rows, but ${wrong} of them ${wrong === 1 ? "isn't" : "aren't"} what Keystone expected. Check that you picked the right columns and conditions.`,
+    };
   }
   if (ordered && !p.every((x, i) => x === e[i])) {
     return { ok: false, reason: 'Right rows, wrong order! This quest is all about ordering.' };
@@ -123,6 +147,8 @@ const KEYWORDS = ['SELECT', 'FROM', 'WHERE', 'ORDER', 'BY', 'LIMIT', 'GROUP', 'H
 export interface SchemaInfo {
   tables: string[];
   columns: string[];
+  /** Column names per table, used to say where a column really lives. */
+  byTable?: Record<string, string[]>;
 }
 
 /** Turns a raw SQLite error into something Keystone would say. */
@@ -130,6 +156,12 @@ export function friendlyError(message: string, schema: SchemaInfo): string {
   let m = /no such column: (\S+)/i.exec(message);
   if (m) {
     const name = m[1].replace(/^.*\./, '');
+    const owners = Object.entries(schema.byTable ?? {})
+      .filter(([, cols]) => cols.some((c) => c.toLowerCase() === name.toLowerCase()))
+      .map(([t]) => t);
+    if (owners.length) {
+      return `\`${name}\` is a real column, but it lives in the \`${owners.join('`, `')}\` table${owners.length > 1 ? 's' : ''}, not the table your query reads from. Check what comes after \`FROM\`.`;
+    }
     const guess = closest(name, schema.columns);
     if (guess) return `There's no column called \`${name}\`. Did you mean \`${guess}\`?`;
     return `There's no column called \`${name}\`. If you meant the *text* ${name}, wrap it in single quotes: \`'${name}'\`. Otherwise, check the column names in the Schema panel.`;

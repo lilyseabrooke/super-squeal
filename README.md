@@ -18,7 +18,8 @@ npm run dev      # http://localhost:5173
 ## Other commands
 
 ```sh
-npm test         # unit tests + an automated playthrough of every quest
+npm test         # unit tests, a full playthrough, and checks that every example,
+                 # template and hint query gets helpful feedback
 npm run build    # typecheck and build a static site into dist/
 npm run preview  # serve the built site
 ```

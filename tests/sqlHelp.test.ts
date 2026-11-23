@@ -42,6 +42,12 @@ describe('friendlyError', () => {
   it('suggests close column names', () => {
     expect(friendlyError('no such column: nmae', schema)).toMatch(/Did you mean `name`/);
   });
+  it('says which table a real column belongs to', () => {
+    const withTables = { ...schema, byTable: { creatures: ['name', 'hunger'], plots: ['id', 'crop'] } };
+    const msg = friendlyError('no such column: hunger', withTables);
+    expect(msg).toMatch(/lives in the `creatures` table/);
+    expect(msg).not.toMatch(/Did you mean/);
+  });
   it('suggests quotes for bare words', () => {
     expect(friendlyError('no such column: Squeal', schema)).toMatch(/'Squeal'/);
   });
