@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Game, memoryKV, type Action } from '../src/game';
 import { QUESTS } from '../src/data/quests';
 import { SCHEMA_VERSION } from '../src/data/schema';
-import { newGame, solveCurrent, sql } from './helpers';
+import { farmDay, newGame, solveCurrent, sql } from './helpers';
 
 
 describe('full playthrough', () => {
@@ -28,10 +28,10 @@ describe('full playthrough', () => {
       expect(days, `${id} took ${days} days`).toBeGreaterThanOrEqual(3);
       expect(days, `${id} took ${days} days`).toBeLessThanOrEqual(20);
     }
-    for (const b of ['frost_detective', 'hollow_hand', 'fair_favourite', 'water_wise', 'ghost_hunter', 'ledger_keeper']) {
+    for (const b of ['frost_detective', 'hollow_hand', 'fair_favourite', 'water_wise', 'ghost_hunter', 'ledger_keeper', 'quill_bearer', 'big_farmer', 'matchmaker', 'lantern_bearer']) {
       expect(g.progress.badges).toContain(b);
     }
-    expect(g.progress.met).toEqual(['Squeal', 'Henbell', 'Sortoise', 'Chimnius', 'Puddlewump', 'Nullkin', 'Echolamb']);
+    expect(g.progress.met).toEqual(['Squeal', 'Henbell', 'Sortoise', 'Chimnius', 'Puddlewump', 'Nullkin', 'Echolamb', 'Glimmerwick']);
     expect(g.bestiaryProgress.found).toBe(g.bestiaryProgress.total);
   });
 
@@ -49,6 +49,9 @@ describe('full playthrough', () => {
       'c6-echolamb':
         'SELECT COUNT(*) FROM (SELECT day, source, plot_id, event FROM farm_log GROUP BY day, source, plot_id, event HAVING COUNT(*) > 1)',
       'c7-laws': 'SELECT COUNT(*) FROM farm WHERE coins < 9999',
+      // Every pollinated plot holds a Sunpuff, and something else was growing that it skipped.
+      'c8-pollen': `SELECT (SELECT COUNT(*) FROM farm_log l JOIN plots p ON l.plot_id = p.id WHERE l.event = 'pollinated' AND p.crop != 'sunpuff') = 0
+                      AND (SELECT COUNT(*) FROM plots WHERE crop IN ('snoutroot', 'glassberry')) > 0`,
     };
     while (g.currentQuest()) {
       const q = g.currentQuest()!;
@@ -242,5 +245,66 @@ describe('night report', () => {
     expect(lines.filter((l) => l.startsWith('🥚'))).toHaveLength(1);
     expect(lines.find((l) => l.startsWith('🥚'))).toMatch(/^🥚 4 eggs laid \(Henbell, Clang, Dingle and Peal\)\.$/);
     expect(lines.filter((l) => l.startsWith('🐷'))).toHaveLength(1);
+  });
+});
+
+describe('chapter 8', () => {
+  async function withMoth() {
+    const g = await newGame();
+    g.db.run("INSERT INTO creatures (name, kind, emoji, plot_id, hunger, mood) VALUES ('Glimmerwick', 'candle-moth', '🕯️', 7, 0, 8)");
+    // Five Sunpuffs at different stages, plus other crops it should ignore.
+    g.db.run(`UPDATE plots SET crop = 'sunpuff', growth = CASE id WHEN 1 THEN 50 WHEN 2 THEN 10 WHEN 3 THEN 30 WHEN 4 THEN 0 ELSE 20 END WHERE id IN (1, 2, 3, 4, 5)`);
+    g.db.run("UPDATE plots SET crop = 'snoutroot', growth = 0 WHERE id IN (9, 10)");
+    return g;
+  }
+  const visited = (g: Awaited<ReturnType<typeof newGame>>) =>
+    g.all<{ plot_id: number }>("SELECT plot_id FROM farm_log WHERE event = 'pollinated' ORDER BY plot_id").map((r) => r.plot_id);
+
+  it('Glimmerwick pollinates the three least-grown Sunpuffs, and nothing else', async () => {
+    const g = await withMoth();
+    g.endDay();
+    expect(visited(g)).toEqual([2, 4, 5]); // growth 10, 0 and 20
+    expect(Number(g.scalar("SELECT COUNT(*) FROM farm_log l JOIN plots p ON l.plot_id = p.id WHERE l.event = 'pollinated' AND p.crop != 'sunpuff'"))).toBe(0);
+    expect(Number(g.scalar("SELECT MIN(amount) FROM farm_log WHERE event = 'pollinated'"))).toBe(15);
+  });
+
+  it('pollinated Sunpuffs grow 15 more than unvisited ones', async () => {
+    const a = await withMoth();
+    const b = await withMoth();
+    b.db.run("DELETE FROM creatures WHERE name = 'Glimmerwick'");
+    a.endDay();
+    b.endDay();
+    const growth = (g: typeof a) => Number(g.scalar('SELECT growth FROM plots WHERE id = 4'));
+    expect(growth(a) - growth(b)).toBe(15);
+  });
+
+  it('a hungry Glimmerwick does not work', async () => {
+    const g = await withMoth();
+    g.db.run("UPDATE creatures SET hunger = 9 WHERE name = 'Glimmerwick'");
+    g.endDay();
+    expect(visited(g)).toEqual([]);
+  });
+
+  it('an unqualified column in a join gets a "say which table" hint', async () => {
+    const g = await newGame();
+    const out = g.runPlayerQuery('SELECT id FROM creatures JOIN plots ON creatures.plot_id = plots.id');
+    expect(out.error).toMatch(/more than one table/);
+  });
+});
+
+describe('Lantern Night', () => {
+  it("counts each pollination once, even though Echolamb echoes the moth's log entries", async () => {
+    const g = await newGame();
+    while (g.currentQuest()?.id !== 'f5-lantern') solveCurrent(g);
+    const q = g.currentQuest()!;
+    if (q.kind !== 'goal') throw new Error('expected a goal quest');
+    const start = g.day;
+    for (let i = 0; i < 3; i++) farmDay(g);
+    if (g.currentQuest()?.id !== 'f5-lantern') return; // finished early: nothing to check
+    const counted = g.goalStatus(q).find((x) => x.label.startsWith('Glimmerwick'))!.have;
+    const nights = g.day - start;
+    expect(counted).toBeLessThanOrEqual(3 * nights);
+    const raw = Number(g.scalar("SELECT COUNT(*) FROM farm_log WHERE event = 'pollinated' AND day >= ?", [start]));
+    expect(raw).toBeGreaterThan(counted); // the echoes are really there
   });
 });

@@ -91,7 +91,8 @@ export const LEVELS = [
   { xp: 500, title: 'Truffle Hunter' },
   { xp: 750, title: 'Grand Grunter' },
   { xp: 1050, title: 'Hollow Legend' },
-  { xp: 1400, title: 'Ledger Mythic 👑' },
+  { xp: 1400, title: 'Ledger Mythic' },
+  { xp: 1700, title: 'Keeper of Connections 👑' },
 ];
 
 export const BADGES: { id: string; emoji: string; name: string; desc: string }[] = [
@@ -106,6 +107,8 @@ export const BADGES: { id: string; emoji: string; name: string; desc: string }[]
   { id: 'ledger_keeper', emoji: '📚', name: 'Ledger Keeper', desc: 'Passed the Ledger Audit.' },
   { id: 'quill_bearer', emoji: '🪶', name: 'Quill Bearer', desc: 'Changed the farm by writing SQL.' },
   { id: 'big_farmer', emoji: '🚜', name: 'Big Farmer', desc: 'Ran all 48 plots of the Big Farm.' },
+  { id: 'matchmaker', emoji: '🔗', name: 'Matchmaker', desc: 'Found the lonely plots with a LEFT JOIN.' },
+  { id: 'lantern_bearer', emoji: '🏮', name: 'Lantern Bearer', desc: 'Grew the garlands for Lantern Night.' },
 ];
 
 const HINT_COSTS = [0, 0, 2, 5];
@@ -431,6 +434,8 @@ export class Game implements QuestApi {
     if (done('f3-nibbled')) award('ledger_keeper');
     if (this.progress.stats.writes > 0) award('quill_bearer');
     if (done('f4-big')) award('big_farmer');
+    if (done('c8-empty')) award('matchmaker');
+    if (done('f5-lantern')) award('lantern_bearer');
   }
 
   get bestiaryProgress(): { found: number; total: number } {

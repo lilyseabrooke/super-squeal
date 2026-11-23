@@ -168,7 +168,7 @@ far. There is no prescribed query and no failure state.
 
 ## Gamification
 
-- **XP and levels**: Piglet → Hog → Boss Hog → Query Swine → Truffle Hunter → Grand Grunter → Hollow Legend → Ledger Mythic 👑
+- **XP and levels**: Piglet → Hog → Boss Hog → Query Swine → Truffle Hunter → Grand Grunter → Hollow Legend → Ledger Mythic → Keeper of Connections 👑
 - **Coins** from selling harvests, eggs and pebbles, plus quest rewards.
 - **Bestiary completion** as the long-term collection goal.
 - **Badges**: Hello, Ledger · Green Trotters · Critter-ologist · Frost Detective · Hollow Hand · Fair Favourite · Water Wise · Ghost Hunter · Ledger Keeper

@@ -80,6 +80,8 @@ export function runNight(db: Database): NightReport {
   const watered = new Set<number>();
   const soggy = new Map<number, string>();
   let nullkinPlot: number | null = null;
+  /** Plot → the Glimmerwick pollinating it tonight. */
+  const pollinated = new Map<number, string>();
 
   for (const c of creatures) {
     const working = works.get(c.id);
@@ -148,6 +150,17 @@ export function runNight(db: Database): NightReport {
       case 'Nullkin':
         nullkinPlot = c.plot_id;
         break;
+      case 'Glimmerwick':
+        // Flies anywhere on the farm to the three least-grown Sunpuffs (it only loves flowers).
+        if (working) {
+          const flowers = plots
+            .filter((p) => p.crop === 'sunpuff' && p.growth < 100 && !pollinated.has(p.id))
+            .sort((a, b) => a.growth - b.growth || a.id - b.id)
+            .slice(0, 3);
+          for (const p of flowers) pollinated.set(p.id, c.name);
+          if (!flowers.length) note('fluttered', c.name);
+        }
+        break;
     }
   }
 
@@ -206,7 +219,12 @@ export function runNight(db: Database): NightReport {
       const crop = CROPS[p.crop];
       const rate = crop ? crop.rate : 25;
       const grow = Math.round(p.moisture > 0 ? rate : rate / 2) + (p.tilled ? 10 : 0);
-      p.growth = Math.min(100, p.growth + grow);
+      const pollen = pollinated.has(p.id) ? 15 : 0;
+      if (pollen) {
+        log(pollinated.get(p.id)!, p.id, 'pollinated', pollen);
+        note('pollinated', p.id);
+      }
+      p.growth = Math.min(100, p.growth + grow + pollen);
     }
     db.run('UPDATE plots SET crop = ?, growth = ?, moisture = ?, warmth = ?, tilled = ? WHERE id = ?', [
       p.crop,
@@ -222,6 +240,8 @@ export function runNight(db: Database): NightReport {
   if (who('egg').length) lines.push(one('egg') ? `🥚 ${who('egg')[0]} laid an egg.` : `🥚 ${who('egg').length} eggs laid (${listNames(who('egg'))}).`);
   if (who('dug').length) lines.push(`🐢 ${listNames(who('dug'))} dug ${one('dug') ? 'something' : 'things'} up.`);
   if (who('watered').length) lines.push(`💧 ${listNames(who('watered'))} watered the plots around ${one('watered') ? 'it' : 'them'}.`);
+  if (who('pollinated').length) lines.push(`🕯️ Something glowing visited plot${one('pollinated') ? '' : 's'} ${listNames(who('pollinated'))} in the dark.`);
+  if (who('fluttered').length) lines.push(`🕯️ ${listNames(who('fluttered'))} fluttered about all night, looking for something.`);
   if (who('wool').length) lines.push(`🧶 ${listNames(who('wool'))} grew ${one('wool') ? 'a bundle' : 'bundles'} of wool.`);
   if (who('coughed').length) lines.push(`😷 ${listNames(who('coughed'))} coughed all night.`);
   if (who('grumbled').length) lines.push(`😠 ${listNames(who('grumbled'))} grumbled with hunger.`);

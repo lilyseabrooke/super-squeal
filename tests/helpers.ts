@@ -55,6 +55,10 @@ export const SOLVERS: Record<string, (g: Game) => void> = {
     }
     quill(g, 'UPDATE plots SET crop = NULL WHERE growth >= 100;');
   },
+  'c8-glimmer': (g) => {
+    quill(g, "UPDATE plots SET crop = 'sunpuff', growth = 0 WHERE id IN (SELECT id FROM plots WHERE crop IS NULL LIMIT 4);");
+    g.endDay();
+  },
 };
 
 /** Runs a Quill write and fails loudly if the Ledger refuses it. */

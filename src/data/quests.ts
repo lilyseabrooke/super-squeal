@@ -13,6 +13,8 @@ export const CHAPTERS: Chapter[] = [
   { n: 6.5, title: 'The Ledger Audit', concept: 'Free play', free: true },
   { n: 7, title: 'The Ledger Quill', concept: 'UPDATE, INSERT & DELETE' },
   { n: 7.5, title: 'The Big Farm', concept: 'Free play', free: true },
+  { n: 8, title: 'Making Connections', concept: 'JOIN' },
+  { n: 8.5, title: 'Lantern Night', concept: 'Free play', free: true },
 ];
 
 function arrive(api: QuestApi, name: string, plot: number, hunger: number, mood: number): string {
@@ -33,6 +35,7 @@ const endedDay = (api: QuestApi) => api.day > api.progress.questStart.day;
 const hungerOf = (api: QuestApi, name: string) => Number(api.scalar('SELECT hunger FROM creatures WHERE name = ?', [name]) ?? 99);
 
 const where = { pattern: /\bwhere\b/i, message: 'Use `WHERE` to filter the rows for this one.' };
+const join = { pattern: /\bjoin\b/i, message: 'Use `JOIN … ON` to connect the two tables.' };
 const groupBy = { pattern: /\bgroup\s+by\b/i, message: 'Use `GROUP BY` to make one row per group.' };
 const isNull = { pattern: /\bis\s+(not\s+)?null\b/i, message: 'Use `IS NULL` (or `IS NOT NULL`) to test for missing values.' };
 const distinct = { pattern: /\bdistinct\b/i, message: 'Use `DISTINCT` to remove the repeats.' };
@@ -1264,6 +1267,212 @@ export const QUESTS: Quest[] = [
       answer: 'Run `SELECT COUNT(*) FROM plots WHERE row >= 4 AND crop IS NULL;`',
     },
     reward: { coins: 20, xp: 30 },
+  },
+  // ───────────────────── Chapter 8: JOIN ─────────────────────
+  {
+    id: 'c8-meet',
+    chapter: 8,
+    kind: 'query',
+    title: 'Who’s standing on what?',
+    story:
+      "With fourteen creatures spread over three fields, I keep losing track of who is standing on what. The answer is split across two tables: `creatures` knows each creature's `plot_id`, and `plots` knows what's growing on each plot.\n\nA **JOIN** stitches tables together wherever their values match. It's the most powerful spell in the Ledger.",
+    task: "Show each creature's `name` next to the `crop` on the plot it's standing on.",
+    concept: {
+      title: 'JOIN … ON',
+      body: '`FROM a JOIN b ON a.x = b.y` pairs up rows from both tables wherever the condition is true. When a column name could belong to either table, write it as `table.column`.',
+      example: 'SELECT orders.item, market.sell_price FROM orders JOIN market ON orders.item = market.item;',
+    },
+    hints: {
+      nudge: "A creature's `plot_id` matches a plot's `id`. Join on that.",
+      blank: 'SELECT creatures.name, plots.crop FROM creatures JOIN plots ON creatures.plot_id = ___;',
+    },
+    expected: 'SELECT creatures.name, plots.crop FROM creatures JOIN plots ON creatures.plot_id = plots.id',
+    mustInclude: [join],
+    reward: { coins: 20, xp: 30 },
+  },
+  {
+    id: 'c8-alias',
+    chapter: 8,
+    kind: 'query',
+    title: 'Nicknames',
+    story: "Writing `creatures.` and `plots.` over and over gets tiring. You can give each table a short **alias** right after its name, and use that instead.",
+    task: "Show each creature's `name` with the `row` and `col` of its plot. Try using aliases!",
+    concept: {
+      title: 'Table aliases',
+      body: '`FROM creatures AS c` lets you write `c.name` instead of `creatures.name`. (The `AS` is optional.) Aliases make joins much easier to read.',
+      example: 'SELECT i.item, m.sell_price FROM inventory AS i JOIN market AS m ON i.item = m.item;',
+    },
+    hints: {
+      nudge: 'Same join as before, with `c` for creatures and `p` for plots.',
+      blank: 'SELECT c.name, p.row, p.col FROM creatures AS c JOIN plots AS p ON c.plot_id = ___;',
+    },
+    expected: 'SELECT c.name, p.row, p.col FROM creatures AS c JOIN plots AS p ON c.plot_id = p.id',
+    mustInclude: [join],
+    reward: { coins: 15, xp: 25 },
+  },
+  {
+    id: 'c8-worth',
+    chapter: 8,
+    kind: 'query',
+    title: 'What’s the barn worth?',
+    story:
+      "`inventory` knows how many of everything you have. `market` knows what each thing sells for. Neither one alone knows what your barn is *worth*… but joined together, they do. You can do maths across a join, and then aggregate it, too.",
+    task: 'Find the total value of your barn: the `SUM` of each item’s `quantity` times its `sell_price`.',
+    hints: {
+      nudge: "Join `inventory` to `market` on `item`, then `SUM(inventory.quantity * market.sell_price)`. (Seeds aren't in `market`, so the join leaves them out.)",
+      blank: 'SELECT SUM(inventory.quantity * market.sell_price) FROM inventory JOIN market ON inventory.item = ___;',
+    },
+    expected: 'SELECT SUM(inventory.quantity * market.sell_price) FROM inventory JOIN market ON inventory.item = market.item',
+    mustInclude: [join],
+    reward: { coins: 20, xp: 30 },
+  },
+  {
+    id: 'c8-glimmer',
+    chapter: 8,
+    kind: 'action',
+    title: 'A light in the dark',
+    onStart: (api) => {
+      const msg = arrive(api, 'Glimmerwick', 7, 2, 8);
+      api.system("UPDATE inventory SET quantity = quantity + 4 WHERE item = 'sunpuff_seed'");
+      return `${msg} Mayor Thimble sent 4 Sunpuff seeds "for the moth".`;
+    },
+    story:
+      "A **Glimmerwick** has settled on plot 7, a moth with a tiny flame for a head, dozing in Chimnius's warmth. Mayor Thimble sent four Sunpuff seeds with a note: *for the moth*. Odd. Glimmerwicks are said to work in the dark, but nobody agrees on what they *do*.",
+    task: 'Make sure some **Sunpuffs** are growing, then end the day.',
+    hints: {
+      nudge: 'Plant the Sunpuff seeds Thimble sent (anywhere you like), then press 🌙 End day.',
+      blank: "UPDATE plots SET crop = 'sunpuff', growth = 0 WHERE id IN (SELECT id FROM plots WHERE crop IS NULL LIMIT ___);",
+      answer: "Write `UPDATE plots SET crop = 'sunpuff', growth = 0 WHERE id IN (SELECT id FROM plots WHERE crop IS NULL LIMIT 4);` then press 🌙 End day.",
+    },
+    check: (api) => Number(api.scalar("SELECT COUNT(*) FROM farm_log WHERE event = 'pollinated'")) > 0,
+    reward: { coins: 10, xp: 15 },
+  },
+  {
+    id: 'c8-pollen',
+    chapter: 8,
+    kind: 'answer',
+    title: 'What does the moth want?',
+    story:
+      "Something glowing visited some plots last night, and `farm_log` has new `'pollinated'` entries. But the log only records a `plot_id`. To see *what was growing* on those plots, you'll need to join the log to `plots`.",
+    task: '**Which crops does Glimmerwick pollinate?**',
+    hints: {
+      nudge: "Join `farm_log` to `plots` on the plot id, and keep only the `'pollinated'` events.",
+      blank: "SELECT farm_log.plot_id, plots.crop FROM farm_log JOIN plots ON farm_log.plot_id = plots.id WHERE farm_log.event = '___';",
+      answer:
+        "Run `SELECT farm_log.plot_id, plots.crop FROM farm_log JOIN plots ON farm_log.plot_id = plots.id WHERE farm_log.event = 'pollinated';`. Every pollinated plot is a Sunpuff, even though other crops were growing too.",
+    },
+    choices: ['Whatever grows next to Chimnius', 'Only Sunpuffs: it ignores every other crop', 'The crops with the lowest moisture'],
+    correct: 1,
+    discovers: ['glimmer_pollinate', 'glimmer_flowers'],
+    reward: { coins: 20, xp: 30 },
+  },
+  {
+    id: 'c8-kinds',
+    chapter: 8,
+    kind: 'query',
+    title: 'Busy bodies',
+    story:
+      "`farm_log` knows each entry's `source` by name, but not what *kind* of creature wrote it. `creatures` knows that. Join them, then group, and you can see which kind of creature is busiest.",
+    task: 'Show each creature `kind` next to how many `farm_log` entries creatures of that kind have written.',
+    hints: {
+      nudge: "Join `farm_log` to `creatures` where `farm_log.source = creatures.name`, then `GROUP BY creatures.kind`. (Entries from the Farmer or the Frost have no matching creature, so the join leaves them out.)",
+      blank: 'SELECT creatures.kind, COUNT(*) FROM farm_log JOIN creatures ON farm_log.source = creatures.name GROUP BY ___;',
+    },
+    expected: 'SELECT creatures.kind, COUNT(*) FROM farm_log JOIN creatures ON farm_log.source = creatures.name GROUP BY creatures.kind',
+    mustInclude: [join, groupBy],
+    reward: { coins: 20, xp: 30 },
+  },
+  {
+    id: 'c8-empty',
+    chapter: 8,
+    kind: 'query',
+    title: 'The lonely plots',
+    story:
+      "A normal `JOIN` only keeps rows that have a match on *both* sides. So a plot with nobody standing on it simply… vanishes from the result. To keep those, use a **LEFT JOIN**: every row from the left table stays, and the missing right-hand side is filled with `NULL`. And you already know how to find `NULL`s!",
+    task: 'List the `id` of every plot that has **no** creature standing on it.',
+    concept: {
+      title: 'LEFT JOIN',
+      body: '`a LEFT JOIN b ON …` keeps *every* row of `a`. Where nothing in `b` matches, `b`’s columns are `NULL`. So `WHERE b.id IS NULL` finds the rows of `a` with no match at all.',
+      example: 'SELECT market.item, orders.id FROM market LEFT JOIN orders ON orders.item = market.item;',
+    },
+    hints: {
+      nudge: 'Start from `plots`, `LEFT JOIN creatures ON creatures.plot_id = plots.id`, and keep rows where the creature side is `NULL`.',
+      blank: 'SELECT plots.id FROM plots LEFT JOIN creatures ON creatures.plot_id = plots.id WHERE creatures.id IS ___;',
+    },
+    expected: 'SELECT plots.id FROM plots LEFT JOIN creatures ON creatures.plot_id = plots.id WHERE creatures.id IS NULL',
+    mustInclude: [{ pattern: /\bleft\s+(outer\s+)?join\b/i, message: 'Use a `LEFT JOIN`, so plots with no creature are kept.' }],
+    reward: { coins: 25, xp: 40 },
+  },
+
+  // ─────────────────── Free play: Lantern Night ───────────────────
+  {
+    id: 'f5-lantern',
+    chapter: 8.5,
+    kind: 'goal',
+    title: 'Lantern Night',
+    story:
+      "Every autumn, the Hollow lights the **Lantern Night** parade, and this year Mayor Thimble wants Sunpuff garlands on every lantern. Your Glimmerwick is the talk of the valley. Sunpuffs grow faster with a moth around!\n\n" +
+      freePlay +
+      "\n\nJoins will help you keep track: which plots have Sunpuffs, who's standing near them, and what your barn is worth.",
+    task: 'Grow the garlands for Lantern Night.',
+    goals: [
+      { label: 'Have 12 Sunpuffs growing at once', progress: (api) => ({ have: Number(api.scalar("SELECT COUNT(*) FROM plots WHERE crop = 'sunpuff'")), need: 12 }) },
+      {
+        label: 'Glimmerwick pollinates 15 Sunpuffs (it manages 3 a night)',
+        progress: (api) => ({
+          // DISTINCT: Echolamb copies yesterday's entries, and an echo isn't a real visit.
+          have: Number(
+            api.scalar("SELECT COUNT(DISTINCT day || ':' || plot_id) FROM farm_log WHERE event = 'pollinated' AND day >= ?", [api.progress.questStart.day]),
+          ),
+          need: 15,
+        }),
+      },
+      { label: 'Harvest 16 Sunpuffs', progress: (api) => ({ have: since(api, (s) => s.harvestedBy.sunpuff ?? 0), need: 16 }) },
+      { label: 'Earn 250 coins from selling', progress: (api) => ({ have: since(api, (s) => s.earned), need: 250 }) },
+      { label: 'Every creature in a good mood (6+) at the same time', progress: (api) => ({ have: lowestMood(api), need: 6 }) },
+    ],
+    hints: {
+      nudge: 'Glimmerwick only boosts three Sunpuffs a night, the least-grown ones first. Keep some young Sunpuffs growing every night, or it has nothing to visit (and keep it fed!).',
+      blank: "Plant a batch in one go: `INSERT INTO orders (action, item, quantity) VALUES ('buy', 'sunpuff_seed', 6);` then `UPDATE plots SET crop = 'sunpuff', growth = 0 WHERE id IN (SELECT id FROM plots WHERE crop IS NULL LIMIT 6);`",
+      answer: 'Keep about a dozen Sunpuffs growing, feed everyone each morning, harvest ripe plots, sell, and replant. Avoid Snoutroot on the Puddlewumps’ plots!',
+    },
+    reward: { coins: 50, xp: 80 },
+  },
+  {
+    id: 'f5-busiest',
+    chapter: 8.5,
+    kind: 'report',
+    title: 'The parade marshal',
+    story: 'The parade marshal, a nervous vole with a clipboard, wants the hardest-working kind of creature to lead the parade.',
+    task: 'Answer the marshal.',
+    question: 'Which `kind` of creature has written the most entries in your log? (Type the kind, like `mud-beast`.)',
+    expected:
+      'SELECT kind FROM (SELECT creatures.kind AS kind, COUNT(*) AS n FROM farm_log JOIN creatures ON farm_log.source = creatures.name GROUP BY creatures.kind) WHERE n = (SELECT MAX(n) FROM (SELECT COUNT(*) AS n FROM farm_log JOIN creatures ON farm_log.source = creatures.name GROUP BY creatures.kind))',
+    hints: {
+      nudge: 'Join the log to creatures, group by kind, and sort so the biggest count comes first.',
+      blank: 'SELECT creatures.kind, COUNT(*) FROM farm_log JOIN creatures ON farm_log.source = creatures.name GROUP BY creatures.kind ORDER BY COUNT(*) ___ LIMIT 1;',
+      answer:
+        'Run `SELECT creatures.kind, COUNT(*) FROM farm_log JOIN creatures ON farm_log.source = creatures.name GROUP BY creatures.kind ORDER BY COUNT(*) DESC LIMIT 1;`',
+    },
+    reward: { coins: 20, xp: 30 },
+  },
+  {
+    id: 'f5-shared',
+    chapter: 8.5,
+    kind: 'report',
+    title: 'Company for the crops',
+    story:
+      '"Crops grow happier with company," the vole insists. "How many of your plots have *both* a crop growing *and* at least one creature on them?"\n\nCareful: a plot with two creatures on it shows up *twice* in a join…',
+    task: 'Answer the marshal.',
+    question: 'How many plots have a crop growing **and** at least one creature standing on them?',
+    expected: 'SELECT COUNT(DISTINCT plots.id) FROM plots JOIN creatures ON creatures.plot_id = plots.id WHERE plots.crop IS NOT NULL',
+    hints: {
+      nudge: 'Join plots to creatures and keep plots with a crop. But count each *plot* only once, even if two creatures share it.',
+      blank: 'SELECT COUNT(DISTINCT plots.id) FROM plots JOIN creatures ON creatures.plot_id = plots.id WHERE plots.crop IS ___;',
+      answer:
+        'Run `SELECT COUNT(DISTINCT plots.id) FROM plots JOIN creatures ON creatures.plot_id = plots.id WHERE plots.crop IS NOT NULL;`. `COUNT(*)` would count a plot twice if two creatures share it.',
+    },
+    reward: { coins: 30, xp: 40 },
   },
 ];
 

@@ -267,7 +267,7 @@ export function mountUI(root: HTMLElement, game: Game) {
     const q = game.currentQuest();
     const el = $('quest');
     if (!q) {
-      el.innerHTML = `<div class="keystone"><div class="avatar" aria-hidden="true">🌾</div><div class="bubble"><p><strong>You did it!</strong> You've finished every chapter written so far. The Hollow is quieter now… but strange footprints lead toward the pond.</p><p><strong>Chapter 8: JOIN</strong> (connecting tables together) is coming soon. Until then the Ledger, and the Quill, are yours. Keep farming and keep asking it questions!</p></div></div>`;
+      el.innerHTML = `<div class="keystone"><div class="avatar" aria-hidden="true">🌾</div><div class="bubble"><p><strong>You did it!</strong> You've finished every chapter written so far. The Hollow is quieter now… but strange footprints lead toward the pond.</p><p><strong>Chapter 9: Subqueries &amp; CTEs</strong> (queries inside queries) is coming soon. Until then the Ledger, and the Quill, are yours. Keep farming and keep asking it questions!</p></div></div>`;
       return;
     }
     const ch = chapterOf(q);

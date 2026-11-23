@@ -105,6 +105,18 @@ export const SPECIES: Record<string, Species> = {
       { id: 'echolamb_echo', label: 'Side effect', value: "Repeats yesterday: copies the previous night's log entries, creating exact duplicates", discover: 'quest' },
     ],
   },
+  Glimmerwick: {
+    name: 'Glimmerwick',
+    emoji: '🕯️',
+    kind: 'candle-moth',
+    food: 'nectar',
+    blurb: 'A moth with a tiny flame for a head. It dozes all day beside anything warm, and is gone the moment the sun sets.',
+    traits: [
+      { id: 'glimmer_eats', label: 'Eats', value: 'Nectar', discover: 'feed' },
+      { id: 'glimmer_pollinate', label: 'Night work', value: 'Flies anywhere on the farm to pollinate Sunpuffs (+15 growth), up to three a night, the least-grown first', discover: 'quest' },
+      { id: 'glimmer_flowers', label: 'Picky', value: 'Only visits flowers. It ignores Snoutroot and Glassberry completely', discover: 'quest' },
+    ],
+  },
 };
 
 const BY_KIND = new Map(Object.values(SPECIES).map((s) => [s.kind, s]));
@@ -118,6 +130,6 @@ export function speciesOf(c: { kind?: string | null; name?: string | null }): Sp
 }
 
 /** Creatures planned for later chapters, shown as silhouettes in the Bestiary. */
-export const COMING_SOON = ['Glimmerwick', 'Tumblecrag', 'Mossgrandle', 'Moolump', 'Twinnet'];
+export const COMING_SOON = ['Tumblecrag', 'Mossgrandle', 'Moolump', 'Twinnet'];
 
 export const ALL_TRAIT_IDS = Object.values(SPECIES).flatMap((s) => s.traits.map((t) => t.id));
