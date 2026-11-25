@@ -32,6 +32,7 @@ npm run preview  # serve the built site
 | `src/data/creatures.ts` | Bestiary: creatures and their hidden traits |
 | `src/data/crops.ts` | Crops and market goods |
 | `src/data/quests.ts` | Chapters and quests (add new content here) |
+| `src/data/almanac.ts` | Keystone's Almanac: review challenges for learned concepts |
 | `src/sim.ts` | The night simulation |
 | `src/quill.ts` | The Ledger Quill: player writes, checked against the Ledger's laws |
 | `src/game.ts` | Game engine: actions, quests, hints, saving, rewind |

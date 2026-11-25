@@ -767,6 +767,116 @@ table.barn td:last-child {
   margin: 0 0 0.5rem;
 }
 
+/* ───────── the almanac ───────── */
+
+.tab .count {
+  display: inline-block;
+  min-width: 1.2em;
+  padding: 0 0.3em;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+.almanac-card {
+  background: var(--panel-2);
+  border-radius: 12px;
+  padding: 0.55rem 0.7rem;
+  margin-bottom: 0.55rem;
+  border: 2px solid transparent;
+}
+
+.almanac-card.active {
+  border-color: var(--accent);
+}
+
+.almanac-card.solved,
+.almanac-card.given_up {
+  opacity: 0.75;
+}
+
+.almanac-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+}
+
+.stars {
+  color: var(--warn);
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.stars .dim {
+  opacity: 0.25;
+}
+
+.almanac-status {
+  display: inline-block;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 0.3rem;
+}
+
+.almanac-status.ok {
+  color: var(--green);
+}
+
+.almanac-status.live {
+  color: var(--accent);
+}
+
+.almanac-hint {
+  font-size: 0.85rem;
+  margin: 0.3rem 0;
+}
+
+.almanac-progress {
+  margin-top: 0.7rem;
+}
+
+.almanac-progress summary {
+  cursor: pointer;
+}
+
+.almanac-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  margin-bottom: 0.5rem;
+  border-radius: 10px;
+  background: var(--warn-soft);
+  font-size: 0.9rem;
+}
+
+.almanac-banner[hidden] {
+  display: none;
+}
+
+.almanac-nudge {
+  font: inherit;
+  font-size: 0.88rem;
+  width: 100%;
+  text-align: left;
+  border: 1px dashed var(--border);
+  background: var(--panel-2);
+  color: var(--ink);
+  border-radius: 10px;
+  padding: 0.45rem 0.7rem;
+  margin-bottom: 0.7rem;
+  cursor: pointer;
+}
+
+.almanac-nudge:hover {
+  border-color: var(--accent);
+}
+
 /* ───────── free play ───────── */
 
 .chip.small.free {
@@ -920,9 +1030,16 @@ textarea#sql {
 
 .tabs {
   display: flex;
-  gap: 0.25rem;
+  flex-wrap: wrap;
+  gap: 0.1rem 0.25rem;
   margin-bottom: 0.7rem;
   border-bottom: 1px solid var(--border);
+}
+
+.tabs .tab {
+  white-space: nowrap;
+  padding-left: 0.4rem;
+  padding-right: 0.4rem;
 }
 
 .tab {

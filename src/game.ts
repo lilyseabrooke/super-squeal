@@ -1,5 +1,6 @@
 import type { Database, SqlJsStatic, SqlValue } from 'sql.js';
 import { CROPS, GOODS, itemLabel } from './data/crops';
+import { ALMANAC, DAILY_CHALLENGES, makeChallenge, MAX_STARS, REVIEW_INTERVALS } from './data/almanac';
 import { ALL_TRAIT_IDS, SPECIES, speciesOf } from './data/creatures';
 import { QUESTS } from './data/quests';
 import { migrate, plotDistance, schemaSql } from './data/schema';
@@ -18,7 +19,7 @@ import {
   tablesIn,
   type SchemaInfo,
 } from './sqlHelp';
-import type { GoalQuest, NightReport, Progress, Quest, QuestApi, ResultSet, Stats } from './types';
+import type { AlmanacItem, GoalQuest, NightReport, Progress, Quest, QuestApi, ResultSet, Stats } from './types';
 
 export const SAVE_KEY = 'super-squeal-save-v1';
 
@@ -81,6 +82,8 @@ export interface QueryOutcome {
   feedback?: { ok: boolean; message: string };
   /** Set when the Ledger Quill changed the farm. */
   write?: { changed: number; effects: string[] };
+  /** Set when an Almanac challenge was being checked. */
+  almanac?: { ok: boolean; message: string };
 }
 
 export const LEVELS = [
@@ -116,6 +119,8 @@ export const BADGES: { id: string; emoji: string; name: string; desc: string }[]
   { id: 'land_baron', emoji: '🏰', name: 'Land Baron', desc: 'Owned every parcel in the valley.' },
   { id: 'time_traveller', emoji: '⏳', name: 'Time Traveller', desc: 'Looked back at yesterday with LAG.' },
   { id: 'record_breaker', emoji: '🏆', name: 'Record Breaker', desc: 'Topped the Hollow’s records board.' },
+  { id: 'bookworm', emoji: '📅', name: 'Bookworm', desc: 'Solved 10 Almanac challenges.' },
+  { id: 'old_hand', emoji: '🧠', name: 'Old Hand', desc: 'Got 10 or more Almanac concepts to 3 stars.' },
 ];
 
 const HINT_COSTS = [0, 0, 2, 5];
@@ -139,6 +144,7 @@ function defaultProgress(): Progress {
     streak: { count: 0, last: '' },
     quill: false,
     replayToday: [],
+    almanac: { concepts: {}, day: 0, today: [], active: null, solved: 0 },
   };
 }
 
@@ -184,6 +190,7 @@ export class Game implements QuestApi {
     if (!this.load()) this.fresh();
     this.touchStreak();
     this.ensureQuestStarted();
+    this.syncAlmanac();
     this.save();
   }
 
@@ -210,6 +217,7 @@ export class Game implements QuestApi {
       snap.close();
       const saved = data.progress ?? {};
       this.progress = { ...defaultProgress(), ...saved, stats: { ...emptyStats(), ...saved.stats } };
+      this.progress.almanac = { ...defaultProgress().almanac, ...saved.almanac };
       // Saves from before stats snapshots: treat the current quest as starting now.
       if (!this.progress.questStart?.stats) this.progress.questStart = { day: this.day, stats: structuredClone(this.progress.stats) };
       this.lastNight = data.lastNight ?? null;
@@ -245,6 +253,7 @@ export class Game implements QuestApi {
     this.fresh();
     this.touchStreak();
     this.ensureQuestStarted();
+    this.syncAlmanac();
     this.save();
     this.emit();
   }
@@ -405,6 +414,7 @@ export class Game implements QuestApi {
         this.completing = false;
       }
     }
+    this.syncAlmanac();
     this.checkBadges();
     this.save();
     this.emit();
@@ -448,6 +458,8 @@ export class Game implements QuestApi {
     if (Number(this.scalar('SELECT COUNT(*) FROM land WHERE owned = 0')) === 0) award('land_baron');
     if (done('c10-lag')) award('time_traveller');
     if (done('f7-records')) award('record_breaker');
+    if (this.progress.almanac.solved >= 10) award('bookworm');
+    if (Object.values(this.progress.almanac.concepts).filter((r) => r.stars >= 3).length >= 10) award('old_hand');
   }
 
   get bestiaryProgress(): { found: number; total: number } {
@@ -487,8 +499,136 @@ export class Game implements QuestApi {
         feedback = { ok: false, message: this.explainMismatch(q, sql, match.reason) };
       }
     }
+    const almanac = this.checkAlmanac(sql, result);
     this.afterChange();
-    return { result, feedback };
+    return { result, feedback, almanac };
+  }
+
+  // ───────────── Keystone's Almanac: spaced review of earlier concepts ─────────────
+
+  /** Concepts whose teaching quest has been completed. */
+  almanacUnlocked(): string[] {
+    return ALMANAC.filter((c) => {
+      const i = QUESTS.findIndex((q) => q.id === c.unlockedBy);
+      return i >= 0 && i < this.progress.questIndex;
+    }).map((c) => c.id);
+  }
+
+  /** Unlocks newly learned concepts and fills today's challenges from whatever is due. */
+  private syncAlmanac() {
+    const a = this.progress.almanac;
+    const day = this.day;
+    const unlocked = this.almanacUnlocked();
+    const fresh = unlocked.filter((id) => !a.concepts[id]);
+    if (fresh.length && !Object.keys(a.concepts).length) {
+      this.onToast({ kind: 'info', title: "📅 Keystone's Almanac is open!", body: 'Little daily challenges to keep what you’ve learned fresh. Find it in the side panel.' });
+    }
+    for (const id of fresh) a.concepts[id] = { stars: 0, due: day, reviews: 0, lapses: 0 };
+
+    if (a.day !== day) {
+      a.day = day;
+      a.today = [];
+      a.active = null;
+    }
+    const regular = a.today.filter((t) => !t.extra);
+    if (regular.length >= DAILY_CHALLENGES) return;
+    const picked = new Set(a.today.map((t) => t.challenge.concept));
+    const due = unlocked
+      .filter((id) => a.concepts[id].due <= day && !picked.has(id))
+      .sort((x, y) => a.concepts[x].due - a.concepts[y].due || a.concepts[x].stars - a.concepts[y].stars || unlocked.indexOf(x) - unlocked.indexOf(y));
+    for (const id of due.slice(0, DAILY_CHALLENGES - regular.length)) a.today.push(this.newAlmanacItem(id, false));
+  }
+
+  private newAlmanacItem(conceptId: string, extra: boolean): AlmanacItem {
+    const concept = ALMANAC.find((c) => c.id === conceptId)!;
+    const seed = `${this.day}:${conceptId}:${this.progress.almanac.today.length}:${this.progress.almanac.solved}`;
+    return { challenge: makeChallenge(concept, seed, (sql, params) => this.all(sql, params)), status: 'open', hinted: false, extra };
+  }
+
+  almanacOpenCount(): number {
+    return this.progress.almanac.today.filter((t) => t.status === 'open').length;
+  }
+
+  /** Makes a challenge the one the Ledger checks. Pass null to stop. */
+  almanacStart(index: number | null) {
+    const a = this.progress.almanac;
+    a.active = index !== null && a.today[index]?.status === 'open' ? index : null;
+    this.afterChange();
+  }
+
+  almanacHint(index: number) {
+    const item = this.progress.almanac.today[index];
+    if (item?.status === 'open') item.hinted = true;
+    this.afterChange();
+  }
+
+  /** Gives up on a challenge: the concept loses a star and comes back tomorrow. */
+  almanacGiveUp(index: number) {
+    const a = this.progress.almanac;
+    const item = a.today[index];
+    if (item?.status !== 'open') return;
+    item.status = 'given_up';
+    const r = a.concepts[item.challenge.concept];
+    r.stars = Math.max(0, r.stars - 1);
+    r.due = this.day + 1;
+    r.lapses++;
+    if (a.active === index) a.active = null;
+    this.afterChange();
+  }
+
+  /** One more challenge beyond the day's three: the weakest concept that isn't already open today. */
+  almanacExtra() {
+    const a = this.progress.almanac;
+    const open = new Set(a.today.filter((t) => t.status === 'open').map((t) => t.challenge.concept));
+    const unlocked = this.almanacUnlocked().filter((id) => !open.has(id));
+    if (!unlocked.length) return;
+    const weakest = Math.min(...unlocked.map((id) => a.concepts[id].stars));
+    const candidates = unlocked.filter((id) => a.concepts[id].stars === weakest);
+    const id = candidates[(this.day + a.today.length) % candidates.length];
+    a.today.push(this.newAlmanacItem(id, true));
+    a.active = a.today.length - 1;
+    this.afterChange();
+  }
+
+  /** Checks a query against the active Almanac challenge, if there is one. */
+  private checkAlmanac(sql: string, result: ResultSet): QueryOutcome['almanac'] {
+    const a = this.progress.almanac;
+    const item = a.active !== null ? a.today[a.active] : undefined;
+    if (!item || item.status !== 'open') return undefined;
+    const c = item.challenge;
+    const match = resultsMatch(result, this.execResult(c.expected), !!c.ordered);
+    const missing = c.require && !new RegExp(c.require.pattern, 'i').test(stripComments(sql));
+    if (!match.ok) {
+      const want = tablesIn(c.expected);
+      const got = tablesIn(sql);
+      const tableHint = want.length && !want.every((t) => got.includes(t)) ? ` This one is about the \`${want.join('` and `')}\` table${want.length > 1 ? 's' : ''}.` : '';
+      return { ok: false, message: `${match.reason ?? 'Not quite.'}${tableHint}` };
+    }
+    if (missing) return { ok: false, message: `Right rows! But this review is practising **${ALMANAC.find((x) => x.id === c.concept)?.title}**. ${c.require!.message}` };
+
+    // Solved: schedule the next review.
+    const r = a.concepts[c.concept];
+    const starsBefore = r.stars;
+    r.reviews++;
+    if (item.hinted) r.due = this.day + 1;
+    else {
+      r.stars = Math.min(MAX_STARS, r.stars + 1);
+      r.due = this.day + REVIEW_INTERVALS[r.stars - 1];
+    }
+    item.status = 'solved';
+    a.active = null;
+    a.solved++;
+    const coins = 10 + 5 * starsBefore;
+    this.system('UPDATE farm SET coins = coins + ?', [coins]);
+    this.progress.xp += 10;
+    const days = r.due - this.day;
+    const when = days === 1 ? 'tomorrow' : `in ${days} days`;
+    return {
+      ok: true,
+      message: item.hinted
+        ? `📅 Solved, with a hint. +${coins} coins. This one will come back ${when} for another go.`
+        : `📅 Solved! +${coins} coins and a star: ${'⭐'.repeat(r.stars)} (${r.stars}/${MAX_STARS}). It'll come back ${when}.`,
+    };
   }
 
   /** Says *why* a query isn't what the quest wants, in the most useful terms available. */

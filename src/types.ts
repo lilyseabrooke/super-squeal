@@ -1,4 +1,5 @@
 import type { SqlValue } from 'sql.js';
+import type { AlmanacChallenge } from './data/almanac';
 
 export interface ResultSet {
   columns: string[];
@@ -25,6 +26,34 @@ export interface Stats {
   quill: Record<string, number>;
 }
 
+/** Spaced-repetition state for one Almanac concept. */
+export interface ConceptReview {
+  /** 0–5: grows with clean solves, shrinks when you give up. */
+  stars: number;
+  /** The in-game day it is next due for review. */
+  due: number;
+  reviews: number;
+  lapses: number;
+}
+
+export interface AlmanacItem {
+  challenge: AlmanacChallenge;
+  status: 'open' | 'solved' | 'given_up';
+  hinted: boolean;
+  /** Extra practice, beyond the day's regular challenges. */
+  extra?: boolean;
+}
+
+export interface AlmanacState {
+  concepts: Record<string, ConceptReview>;
+  /** The in-game day `today` was chosen for. */
+  day: number;
+  today: AlmanacItem[];
+  /** Index into `today` of the challenge the Ledger is checking, if any. */
+  active: number | null;
+  solved: number;
+}
+
 export interface Progress {
   version: 1;
   questIndex: number;
@@ -42,6 +71,7 @@ export interface Progress {
   quill: boolean;
   /** System changes made today, replayed after a rewind. */
   replayToday: SystemEvent[];
+  almanac: AlmanacState;
 }
 
 export interface NightReport {

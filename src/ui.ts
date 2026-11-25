@@ -5,6 +5,7 @@ import { chapterOf, QUESTS } from './data/quests';
 import { areaOf, fieldName } from './data/schema';
 import { BADGES, type Action, type Game, type QueryOutcome, type Toast } from './game';
 import { isSqlTemplate } from './sqlHelp';
+import { ALMANAC, MAX_STARS } from './data/almanac';
 
 // ───────────── tiny helpers ─────────────
 
@@ -89,6 +90,7 @@ export function mountUI(root: HTMLElement, game: Game) {
             <h2>📜 The Ledger <span id="quill-badge"></span></h2>
             <span class="muted small">Ctrl/⌘ + Enter to run</span>
           </div>
+          <div class="almanac-banner" id="almanac-banner" hidden></div>
           <textarea id="sql" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="SQL query" placeholder="SELECT * FROM creatures;"></textarea>
           <div class="row">
             <button class="btn primary" id="run">Run query ▶</button>
@@ -112,7 +114,7 @@ export function mountUI(root: HTMLElement, game: Game) {
   let selectedPlot: number | null = null;
   /** The farm is too big to show at once: one area (the home farm, or one parcel) at a time. */
   let currentArea = 'Home farm';
-  let sideTab: 'schema' | 'bestiary' | 'badges' = 'schema';
+  let sideTab: 'schema' | 'bestiary' | 'badges' | 'almanac' = 'schema';
   let lastOutcome: QueryOutcome | null = null;
   let reportDraft = '';
   const openTables = new Set<string>();
@@ -292,11 +294,19 @@ export function mountUI(root: HTMLElement, game: Game) {
       <table class="barn"><tbody><tr><th colspan="3">Seeds</th></tr>${seeds}<tr><th colspan="3">Goods</th></tr>${goods}${land}</tbody></table>`;
   }
 
+  /** Points at the Almanac when review challenges are waiting (and none is in progress). */
+  function almanacNudge(): string {
+    const n = game.almanacOpenCount();
+    return n && game.progress.almanac.active === null
+      ? `<button class="almanac-nudge" data-act="tab" data-tab="almanac">📅 ${n} review challenge${n === 1 ? ' is' : 's are'} waiting in the Almanac</button>`
+      : '';
+  }
+
   function renderQuest() {
     const q = game.currentQuest();
     const el = $('quest');
     if (!q) {
-      el.innerHTML = `<div class="keystone"><div class="avatar" aria-hidden="true">🌾</div><div class="bubble"><p><strong>You did it!</strong> You've finished every chapter written so far, from your very first <code>SELECT</code> all the way to window functions. That's a real, working knowledge of SQL.</p><p>The Hollow is quieter now… but strange footprints lead toward the pond, where a pair of koi circle each other. More is coming. Until then the Ledger, and the Quill, are yours. Keep farming and keep asking it questions!</p></div></div>`;
+      el.innerHTML = `<div class="keystone"><div class="avatar" aria-hidden="true">🌾</div><div class="bubble"><p><strong>You did it!</strong> You've finished every chapter written so far, from your very first <code>SELECT</code> all the way to window functions. That's a real, working knowledge of SQL.</p><p>The Hollow is quieter now… but strange footprints lead toward the pond, where a pair of koi circle each other. More is coming. Until then the Ledger, and the Quill, are yours. Keep farming, keep asking it questions, and keep your Almanac up to date!</p></div></div>${almanacNudge()}`;
       return;
     }
     const ch = chapterOf(q);
@@ -370,6 +380,7 @@ export function mountUI(root: HTMLElement, game: Game) {
         <div class="bubble"><p>${md(q.story)}</p></div>
       </div>
       <div class="task">🎯 ${md(q.task)}</div>
+      ${almanacNudge()}
       ${
         q.concept
           ? `<details class="concept" open><summary>📘 New spell: <strong>${esc(q.concept.title)}</strong></summary>
@@ -379,6 +390,70 @@ export function mountUI(root: HTMLElement, game: Game) {
       }
       ${interaction}
       <div class="hints">${hints.length ? `<ul>${hints.join('')}</ul>` : ''}${hintBtn}</div>`;
+  }
+
+  function renderAlmanac(): string {
+    const a = game.progress.almanac;
+    const stars = (n: number) => `<span class="stars" aria-label="${n} of ${MAX_STARS} stars">${'★'.repeat(n)}<span class="dim">${'★'.repeat(MAX_STARS - n)}</span></span>`;
+    const cards = a.today
+      .map((item, i) => {
+        const c = item.challenge;
+        const concept = ALMANAC.find((x) => x.id === c.concept)!;
+        const r = a.concepts[c.concept];
+        const active = a.active === i;
+        const status =
+          item.status === 'solved'
+            ? '<span class="almanac-status ok">✓ Solved</span>'
+            : item.status === 'given_up'
+              ? '<span class="almanac-status">Given up</span>'
+              : active
+                ? '<span class="almanac-status live">Checking in the Ledger</span>'
+                : '';
+        const hint =
+          item.hinted && item.status === 'open'
+            ? `<div class="almanac-hint">🧩 <pre><code>${esc(c.hint)}</code></pre><button class="btn small ghost" data-act="use-sql" data-sql="${esc(c.hint)}">Copy into Ledger</button></div>`
+            : '';
+        const answer = item.status === 'given_up' ? `<div class="almanac-hint">🔑 One answer: <pre><code>${esc(c.expected)};</code></pre></div>` : '';
+        const buttons =
+          item.status === 'open'
+            ? `<div class="row wrap">
+                ${active ? `<button class="btn small" data-act="almanac-stop">Stop</button>` : `<button class="btn small primary" data-act="almanac-start" data-i="${i}">Start</button>`}
+                ${item.hinted ? '' : `<button class="btn small ghost" data-act="almanac-hint" data-i="${i}" title="Shows a fill-in-the-blank. The concept won't gain a star this time.">Hint</button>`}
+                <button class="btn small ghost" data-act="almanac-giveup" data-i="${i}" title="Shows an answer. The concept loses a star and comes back tomorrow.">Give up</button>
+              </div>`
+            : '';
+        return `<div class="almanac-card ${item.status} ${active ? 'active' : ''}">
+          <div class="almanac-head"><strong>${esc(concept.title)}</strong> ${stars(r?.stars ?? 0)}${item.extra ? ' <span class="muted small">extra</span>' : ''}</div>
+          <p class="small">${md(c.prompt)}</p>
+          ${status}${hint}${answer}${buttons}
+        </div>`;
+      })
+      .join('');
+    const unlocked = game.almanacUnlocked();
+    const progress = unlocked
+      .map((id) => {
+        const concept = ALMANAC.find((x) => x.id === id)!;
+        const r = a.concepts[id];
+        const dueIn = r ? r.due - game.day : 0;
+        return `<tr><td>${esc(concept.title)}</td><td>${stars(r?.stars ?? 0)}</td><td class="muted small">${dueIn <= 0 ? 'due' : dueIn === 1 ? 'tomorrow' : `in ${dueIn} days`}</td></tr>`;
+      })
+      .join('');
+    return `<p class="muted small">Keystone's Almanac brings back what you've already learned, a little at a time. Solve a challenge cleanly and that concept earns a star and comes back later. Using a hint or giving up brings it back sooner.</p>
+      ${cards || '<p class="small">Nothing due today. Well done!</p>'}
+      <button class="btn small" data-act="almanac-extra">${a.today.length ? 'Extra practice' : 'Practice anyway'}</button>
+      <details class="almanac-progress"><summary class="small">Your concepts (${unlocked.length})</summary><table class="barn"><tbody>${progress}</tbody></table></details>`;
+  }
+
+  /** A banner over the Ledger while an Almanac challenge is being checked. */
+  function renderAlmanacBanner() {
+    const a = game.progress.almanac;
+    const item = a.active !== null ? a.today[a.active] : undefined;
+    const el = $('almanac-banner');
+    el.hidden = !item;
+    if (item) {
+      el.innerHTML = `<div class="almanac-banner-text">📅 <strong>Almanac:</strong> ${md(item.challenge.prompt)}</div>
+        <button class="btn small ghost" data-act="almanac-stop">Stop</button>`;
+    }
   }
 
   function renderResult() {
@@ -405,13 +480,16 @@ export function mountUI(root: HTMLElement, game: Game) {
       : o.write
         ? ''
         : '<p class="muted small">Done. (That query returned no table.)</p>';
-    el.innerHTML = wrote + fb + body;
+    const alm = o.almanac ? `<div class="feedback ${o.almanac.ok ? 'ok' : 'nope'}">${o.almanac.ok ? '' : '📅 🤔 '}${md(o.almanac.message)}</div>` : '';
+    el.innerHTML = alm + wrote + fb + body;
   }
 
   function renderSide() {
+    const open = game.almanacOpenCount();
     const tabs: [typeof sideTab, string][] = [
       ['schema', '🗂️ Schema'],
       ['bestiary', '📔 Bestiary'],
+      ...(game.almanacUnlocked().length ? [['almanac', `📅 Almanac${open ? ` <span class="count">${open}</span>` : ''}`] as [typeof sideTab, string]] : []),
       ['badges', '🏅 Badges'],
     ];
     $('tabs').innerHTML = tabs
@@ -458,6 +536,8 @@ export function mountUI(root: HTMLElement, game: Game) {
         <div class="beasts">${cards}</div>
         <div class="silhouettes" title="Creatures you haven't met yet">${'<span>❓</span>'.repeat(unseen)}</div>
         <p class="muted small">${unseen} more creatures roam the Hollow…</p>`;
+    } else if (sideTab === 'almanac') {
+      side.innerHTML = renderAlmanac();
     } else {
       side.innerHTML = `<div class="badges">${BADGES.map((b) => {
         const has = game.progress.badges.includes(b.id);
@@ -474,6 +554,7 @@ export function mountUI(root: HTMLElement, game: Game) {
 
   function render() {
     renderQuillBadge();
+    renderAlmanacBanner();
     const creatures = game.all<CreatureRow>('SELECT * FROM creatures ORDER BY id');
     const plots = game.all<PlotRow>('SELECT * FROM plots ORDER BY id');
 
@@ -577,6 +658,22 @@ export function mountUI(root: HTMLElement, game: Game) {
       case 'tab':
         sideTab = d.tab as typeof sideTab;
         renderSide();
+        break;
+      case 'almanac-start':
+        game.almanacStart(Number(d.i));
+        editor.focus();
+        break;
+      case 'almanac-stop':
+        game.almanacStart(null);
+        break;
+      case 'almanac-hint':
+        game.almanacHint(Number(d.i));
+        break;
+      case 'almanac-giveup':
+        if (confirm('Give up on this challenge? You’ll see an answer, and this concept will lose a star and come back tomorrow.')) game.almanacGiveUp(Number(d.i));
+        break;
+      case 'almanac-extra':
+        game.almanacExtra();
         break;
       case 'area':
         currentArea = d.area ?? 'Home farm';

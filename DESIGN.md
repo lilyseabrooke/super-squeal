@@ -172,6 +172,32 @@ far. There is no prescribed query and no failure state.
 - Hints in free play are strategy tips rather than queries, except the final
   hint of a report, which shows one query that works.
 
+## Keystone's Almanac: spaced review
+
+Chapters keep moving forward, so the Almanac brings earlier concepts back on
+their own, instead of only as small pieces of a new query. It opens as soon as
+the first concept is learned, and lives in a side-panel tab.
+
+- **15 concepts**, each unlocked by the quest that teaches it: choosing columns,
+  `WHERE`, text values, `AND`/`OR`, `ORDER BY`/`LIMIT`, aggregates, `GROUP BY`,
+  `HAVING`, `NULL`, `DISTINCT`, `JOIN`, `LEFT JOIN`, subqueries, CTEs and window
+  functions (`src/data/almanac.ts`).
+- **Challenges come from the live farm.** Each concept has 2–3 challenge
+  variants that pick their details from current data (a real creature, a field
+  you own, a threshold that exists), so the same concept is usually a different
+  question each time. Answers are checked by result rows, like query quests, plus a
+  requirement that the answer really uses the concept being reviewed ("Right rows!
+  But this review is practising `HAVING`…").
+- **Spaced repetition (Leitner-style).** Each concept has 0–5 stars and a due day.
+  A clean solve adds a star and schedules the next review 1, 3, 6, 10, then 15
+  in-game days later. A hinted solve keeps the stars and comes back tomorrow.
+  Giving up shows an answer, removes a star and comes back tomorrow.
+- **Three challenges a day**, the most overdue concepts first, with "Extra
+  practice" for more. You answer in the normal Ledger: starting a challenge shows a
+  banner over the editor, and it never interferes with the main quest.
+- **Rewards**: 10 coins plus 5 per star the concept already had, 10 XP, and the
+  Bookworm and Old Hand badges.
+
 ## Beginner safety nets
 
 - **Keystone the scarecrow** explains each concept with a short concept card.
